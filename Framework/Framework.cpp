@@ -603,6 +603,7 @@ private:
 
 		IDXGIFactory * DXGIFactory = nullptr;
 		hr = CreateDXGIFactory1(__uuidof(IDXGIFactory), (void**)(&DXGIFactory));
+		if (FAILED(hr))panicF("Failed to create CreateDXGIFactory1!");
 
 		IDXGIAdapter * Adapter = nullptr;
 		for (UINT iAdapter = 0; DXGIFactory->EnumAdapters(iAdapter, &Adapter) != DXGI_ERROR_NOT_FOUND; ++iAdapter)
@@ -614,39 +615,16 @@ private:
 			Adapter->Release();
 		}
 
+		auto DriverType = Adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
 
-		//TODO IMPLEMENT THE REST HERE!!! SEE 235 in oculus util
-		// Try to create the device and swap chain:
-		/*for (UINT driverTypeIndex = 0; driverTypeIndex < numDriverTypes; ++driverTypeIndex)
-		{
-			auto driverType = driverTypes[driverTypeIndex];
-			hr = D3D11CreateDeviceAndSwapChain(nullptr, driverType, nullptr, createDeviceFlags,
-				featureLevels, numFeatureLevels, D3D11_SDK_VERSION,
-				&sd, m_pSwapChain.GetAddressOf(), m_pD3DDevice.GetAddressOf(),
-				&featureLevel, m_pDeviceContext.GetAddressOf());
+		hr = D3D11CreateDevice(Adapter, DriverType, 0, 0, 0, 0, D3D11_SDK_VERSION, m_pD3DDevice.GetAddressOf(), nullptr, m_pDeviceContext.GetAddressOf());
+		Adapter->Release();
+		if (FAILED(hr))panicF("Failed to create D3D device!");
 
-			if (hr == E_INVALIDARG)
-			{
-				// DirectX 11.0 platforms will not recognize D3D_FEATURE_LEVEL_11_1 so we need to retry without it
-				hr = D3D11CreateDeviceAndSwapChain(nullptr, driverType, nullptr, createDeviceFlags,
-					&featureLevels[1], numFeatureLevels - 1,
-					D3D11_SDK_VERSION, &sd, m_pSwapChain.GetAddressOf(),
-					m_pD3DDevice.GetAddressOf(), &featureLevel,
-					m_pDeviceContext.GetAddressOf());
-			}
+		hr = DXGIFactory->CreateSwapChain(m_pD3DDevice.Get(), &sd, m_pSwapChain.GetAddressOf());
+		DXGIFactory->Release();
+		if (FAILED(hr))panicF("Failed to create SwapChain!");
 
-			if (SUCCEEDED(hr))
-			{
-				break;
-			}
-		}*/
-
-
-
-		if (FAILED(hr))
-		{
-			panicF("Failed to create D3D device or swap chain!");
-		}
 
 		// Now setup all the views and bind the target.
 		SetupRenderTarget(width, height);
