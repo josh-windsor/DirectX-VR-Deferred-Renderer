@@ -5,6 +5,8 @@
 #include "Texture.h"
 #include <vector>
 
+using namespace DirectX;
+
 constexpr float kBlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 constexpr UINT kSampleMask = 0xffffffff;
 constexpr u32 kLightGridSize = 24;
@@ -247,9 +249,25 @@ public:
 			}
 		}
 	}
+	void SetAndClearRenderTarget(ID3D11RenderTargetView * rendertarget, ID3D11DepthStencilView* depthStencil, ID3D11DeviceContext* context)
+	{
+		//Set & Clear buffers
+		f32 clearValue[] = { 0.f, 0.f, 0.f, 0.f };
+
+		context->OMSetRenderTargets(1, &rendertarget, depthStencil);
+		context->ClearRenderTargetView(rendertarget, clearValue);
+		if (depthStencil)
+			context->ClearDepthStencilView(depthStencil, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1, 0);
+	}
 
 	void on_render(SystemsInterface& systems) override
 	{
+		ovrSessionStatus sessionStatus;
+		ovrResult result = ovr_GetSessionStatus(*systems.pOvrSession, &sessionStatus);
+		printf(std::to_string(result).c_str());
+		if (OVR_FAILURE(result))
+			panicF("Connection failed.");
+
 		//////////////////////////////////////////////////////////////////////////
 		// Imgui can also be used inside the render function.
 		//////////////////////////////////////////////////////////////////////////
@@ -287,14 +305,7 @@ public:
 
 
 
-		//VR Implementation 
-		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(*systems.pOvrSession);
-
-		// Call ovr_GetRenderDesc each frame to get the ovrEyeRenderDesc, as the returned values (e.g. HmdToEyePose) may change at runtime.
-		ovrEyeRenderDesc eyeRenderDesc[2];
-		eyeRenderDesc[0] = ovr_GetRenderDesc(*systems.pOvrSession, ovrEye_Left, hmdDesc.DefaultEyeFov[0]);
-		eyeRenderDesc[1] = ovr_GetRenderDesc(*systems.pOvrSession, ovrEye_Right, hmdDesc.DefaultEyeFov[1]);
-
+		
 
 		//=======================================================================================
 		// The Geometry Pass.
@@ -471,6 +482,107 @@ public:
 		}
 
 
+		//VR Implementation 
+		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(*systems.pOvrSession);
+
+		// Call ovr_GetRenderDesc each frame to get the ovrEyeRenderDesc, as the returned values (e.g. HmdToEyePose) may change at runtime.
+		ovrEyeRenderDesc eyeRenderDesc[2];
+		eyeRenderDesc[0] = ovr_GetRenderDesc(*systems.pOvrSession, ovrEye_Left, hmdDesc.DefaultEyeFov[0]);
+		eyeRenderDesc[1] = ovr_GetRenderDesc(*systems.pOvrSession, ovrEye_Right, hmdDesc.DefaultEyeFov[1]);
+
+		// Get both eye poses simultaneously, with IPD offset already included. 
+		ovrPosef EyeRenderPose[2];
+		ovrPosef HmdToEyePose[2] = { eyeRenderDesc[0].HmdToEyePose,
+									 eyeRenderDesc[1].HmdToEyePose };
+
+		double sensorSampleTime;    // sensorSampleTime is fed into the layer later
+		ovr_GetEyePoses(*systems.pOvrSession, 0, ovrTrue, HmdToEyePose, EyeRenderPose, &sensorSampleTime);
+
+		ovrTimewarpProjectionDesc posTimewarpProjectionDesc = {};
+
+		// Render Scene to Eye Buffers
+		for (int eye = 0; eye < 2; ++eye)
+		{
+			SetAndClearRenderTarget(systems.pEyeRenderTexture[eye]->GetRTV(), systems.pEyeRenderTexture[eye]->GetDSV(), systems.pD3DContext);
+			D3D11_VIEWPORT D3Dvp;
+			D3Dvp.Width = (float)systems.pEyeRenderViewport[eye].Size.w;    D3Dvp.Height = (float)systems.pEyeRenderViewport[eye].Size.h;
+			D3Dvp.MinDepth = 0;   D3Dvp.MaxDepth = 1;
+			D3Dvp.TopLeftX = (float)systems.pEyeRenderViewport[eye].Pos.x; D3Dvp.TopLeftY = (float)systems.pEyeRenderViewport[eye].Pos.y;
+			systems.pD3DContext->RSSetViewports(1, &D3Dvp);
+			//Get the pose information in XM format
+			XMVECTOR eyeQuat = XMVectorSet(EyeRenderPose[eye].Orientation.x, EyeRenderPose[eye].Orientation.y,
+				EyeRenderPose[eye].Orientation.z, EyeRenderPose[eye].Orientation.w);
+			XMVECTOR eyePos = XMVectorSet(EyeRenderPose[eye].Position.x, EyeRenderPose[eye].Position.y, EyeRenderPose[eye].Position.z, 0);
+
+			// Get view and projection matrices for the Rift camera
+
+			//XMVECTOR CombinedPos = XMVectorAdd(XMLoadFloat3(&systems.pCamera->eye), XMVector3Rotate(eyePos, XMLoadFloat3(&systems.pCamera->right)));
+			//Camera finalCam(CombinedPos, XMQuaternionMultiply(eyeQuat, XMLoadFloat4(&systems.pCamera->right));
+			XMMATRIX view = systems.pCamera->viewMatrix;
+			ovrMatrix4f p = ovrMatrix4f_Projection(eyeRenderDesc[eye].Fov, 0.2f, 1000.0f, ovrProjection_None);
+			posTimewarpProjectionDesc = ovrTimewarpProjectionDesc_FromProjection(p, ovrProjection_None);
+			XMMATRIX proj = XMMatrixSet(p.M[0][0], p.M[1][0], p.M[2][0], p.M[3][0],
+				p.M[0][1], p.M[1][1], p.M[2][1], p.M[3][1],
+				p.M[0][2], p.M[1][2], p.M[2][2], p.M[3][2],
+				p.M[0][3], p.M[1][3], p.M[2][3], p.M[3][3]);
+			XMMATRIX prod = XMMatrixMultiply(view, proj);
+
+
+			//DRAW
+			constexpr f32 kGridSpacing = 1.5f;
+			constexpr u32 kNumInstances = 5;
+			constexpr u32 kNumModelTypes = 2;
+
+			for (u32 i = 0; i < kNumModelTypes; ++i)
+			{
+				// Bind a mesh and texture.
+				m_meshArray[i].bind(systems.pD3DContext);
+				m_textureArray[i].bind(systems.pD3DContext, ShaderStage::kPixel, 0);
+
+				// Draw several instances
+				for (u32 j = 0; j < kNumInstances; ++j)
+				{
+					// Compute MVP matrix.
+					m4x4 matModel = m4x4::CreateTranslation(v3(j * kGridSpacing, i * kGridSpacing, 0.f));
+					m4x4 matMVP = matModel * prod;
+
+					// Update Per Draw Data
+					m_perDrawCBData.m_matMVP = matMVP.Transpose();
+
+					// Push to GPU
+					push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
+
+					// Draw the mesh.
+					m_meshArray[i].draw(systems.pD3DContext);
+				}
+			}
+
+			// Commit rendering to the swap chain
+			systems.pEyeRenderTexture[eye]->Commit();
+
+		}
+
+		// Initialize our single full screen Fov layer.
+		ovrLayerEyeFovDepth ld = {};
+		ld.Header.Type = ovrLayerType_EyeFovDepth;
+		ld.Header.Flags = 0;
+		ld.ProjectionDesc = posTimewarpProjectionDesc;
+		ld.SensorSampleTime = sensorSampleTime;
+
+		for (int eye = 0; eye < 2; ++eye)
+		{
+			ld.ColorTexture[eye] = systems.pEyeRenderTexture[eye]->TextureChain;
+			ld.DepthTexture[eye] = systems.pEyeRenderTexture[eye]->DepthTextureChain;
+			ld.Viewport[eye] = systems.pEyeRenderViewport[eye];
+			ld.Fov[eye] = hmdDesc.DefaultEyeFov[eye];
+			ld.RenderPose[eye] = EyeRenderPose[eye];
+		}
+
+		ovrLayerHeader* layers = &ld.Header;
+		result = ovr_SubmitFrame(*systems.pOvrSession, 0, nullptr, &layers, 1);
+		// exit the rendering loop if submit returns an error, will retry on ovrError_DisplayLost
+		if (!OVR_SUCCESS(result))
+			panicF("Fail Rendering Loop!");
 
 
 		// Unbind all the SRVs because we need them as targets next frame

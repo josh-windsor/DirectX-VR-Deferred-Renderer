@@ -21,7 +21,6 @@
 // OVR
 // ========================================================
 
-#include "OVR_CAPI_D3D.h"
 #ifndef VALIDATE
 #define VALIDATE(x, msg) if (!(x)) { MessageBoxA(nullptr, (msg), "JW_STGA", MB_ICONERROR | MB_OK); exit(-1); }
 #endif
@@ -316,151 +315,6 @@ private:
 int Window::s_width = 1080;
 int Window::s_height = 600;
 
-//------------------------------------------------------------
-// ovrSwapTextureSet wrapper class that also maintains the render target views
-// needed for D3D11 rendering.
-struct OculusTexture
-{
-	ovrSession               Session;
-	ovrTextureSwapChain      TextureChain;
-	ovrTextureSwapChain      DepthTextureChain;
-	std::vector<ID3D11RenderTargetView*> TexRtv;
-	std::vector<ID3D11DepthStencilView*> TexDsv;
-
-	OculusTexture() :
-		Session(nullptr),
-		TextureChain(nullptr),
-		DepthTextureChain(nullptr)
-	{
-	}
-
-	bool Init(ovrSession session, int sizeW, int sizeH, int sampleCount, bool createDepth, ID3D11Device* pD3DDevice)
-	{
-		Session = session;
-
-		// create color texture swap chain first
-		{
-			ovrTextureSwapChainDesc desc = {};
-			desc.Type = ovrTexture_2D;
-			desc.ArraySize = 1;
-			desc.Width = sizeW;
-			desc.Height = sizeH;
-			desc.MipLevels = 1;
-			desc.SampleCount = sampleCount;
-			desc.Format = OVR_FORMAT_R8G8B8A8_UNORM_SRGB;
-			desc.MiscFlags = ovrTextureMisc_DX_Typeless | ovrTextureMisc_AutoGenerateMips;
-			desc.BindFlags = ovrTextureBind_DX_RenderTarget;
-			desc.StaticImage = ovrFalse;
-
-			ovrResult result = ovr_CreateTextureSwapChainDX(session, pD3DDevice, &desc, &TextureChain);
-			if (!OVR_SUCCESS(result))
-				panicF("%i", result);
-
-
-			int textureCount = 0;
-			ovr_GetTextureSwapChainLength(Session, TextureChain, &textureCount);
-			for (int i = 0; i < textureCount; ++i)
-			{
-				ID3D11Texture2D* tex = nullptr;
-				ovr_GetTextureSwapChainBufferDX(Session, TextureChain, i, IID_PPV_ARGS(&tex));
-
-				D3D11_RENDER_TARGET_VIEW_DESC rtvd = {};
-				rtvd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-				rtvd.ViewDimension = (sampleCount > 1) ? D3D11_RTV_DIMENSION_TEXTURE2DMS
-					: D3D11_RTV_DIMENSION_TEXTURE2D;
-				ID3D11RenderTargetView* rtv;
-				HRESULT hr = pD3DDevice->CreateRenderTargetView(tex, &rtvd, &rtv);
-				VALIDATE((hr == ERROR_SUCCESS), "Error creating render target view");
-				TexRtv.push_back(rtv);
-				tex->Release();
-			}
-		}
-
-		// if requested, then create depth swap chain
-		if (createDepth)
-		{
-			ovrTextureSwapChainDesc desc = {};
-			desc.Type = ovrTexture_2D;
-			desc.ArraySize = 1;
-			desc.Width = sizeW;
-			desc.Height = sizeH;
-			desc.MipLevels = 1;
-			desc.SampleCount = sampleCount;
-			desc.Format = OVR_FORMAT_D32_FLOAT;
-			desc.MiscFlags = ovrTextureMisc_None;
-			desc.BindFlags = ovrTextureBind_DX_DepthStencil;
-			desc.StaticImage = ovrFalse;
-
-			ovrResult result = ovr_CreateTextureSwapChainDX(session, pD3DDevice, &desc, &DepthTextureChain);
-			if (!OVR_SUCCESS(result))
-				return false;
-
-			int textureCount = 0;
-			ovr_GetTextureSwapChainLength(Session, DepthTextureChain, &textureCount);
-			for (int i = 0; i < textureCount; ++i)
-			{
-				ID3D11Texture2D* tex = nullptr;
-				ovr_GetTextureSwapChainBufferDX(Session, DepthTextureChain, i, IID_PPV_ARGS(&tex));
-
-				D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-				dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
-				dsvDesc.ViewDimension = (sampleCount > 1) ? D3D11_DSV_DIMENSION_TEXTURE2DMS
-					: D3D11_DSV_DIMENSION_TEXTURE2D;
-				dsvDesc.Texture2D.MipSlice = 0;
-
-				ID3D11DepthStencilView* dsv;
-				HRESULT hr = pD3DDevice->CreateDepthStencilView(tex, &dsvDesc, &dsv);
-				VALIDATE((hr == ERROR_SUCCESS), "Error creating depth stencil view");
-				TexDsv.push_back(dsv);
-				tex->Release();
-			}
-		}
-
-		return true;
-	}
-
-	~OculusTexture()
-	{
-		for (int i = 0; i < (int)TexRtv.size(); ++i)
-		{
-			TexRtv[i]->Release();
-		}
-		for (int i = 0; i < (int)TexDsv.size(); ++i)
-		{
-			TexDsv[i]->Release();
-		}
-		if (TextureChain)
-		{
-			ovr_DestroyTextureSwapChain(Session, TextureChain);
-		}
-		if (DepthTextureChain)
-		{
-			ovr_DestroyTextureSwapChain(Session, DepthTextureChain);
-		}
-	}
-
-	ID3D11RenderTargetView* GetRTV()
-	{
-		int index = 0;
-		ovr_GetTextureSwapChainCurrentIndex(Session, TextureChain, &index);
-		return TexRtv[index];
-	}
-	ID3D11DepthStencilView* GetDSV()
-	{
-		int index = 0;
-		ovr_GetTextureSwapChainCurrentIndex(Session, DepthTextureChain, &index);
-		return TexDsv[index];
-	}
-
-	// Commit changes
-	void Commit()
-	{
-		ovr_CommitTextureSwapChain(Session, TextureChain);
-		ovr_CommitTextureSwapChain(Session, DepthTextureChain);
-	}
-};
-
-// ========================================================
 // ========================================================
 // RenderWindowD3D11
 // ========================================================
@@ -477,6 +331,9 @@ public:
 	ComPtr<ID3D11RenderTargetView> m_pRenderTargetView;
 	ComPtr<ID3D11DepthStencilState> m_pDepthStencilState;
 	ovrSession m_pOvrSession;
+	ovrRecti m_pOvrEyeRenderViewport[2];
+	OculusTexture* m_pOvrEyeRenderTexture[2] = {nullptr, nullptr};
+
 
 	std::function<void()>          m_pRenderCallback;
 	std::function<void(u32, u32)>  m_pResizeCallback;
@@ -543,7 +400,6 @@ private:
 	void initD3D()
 	{
 
-		OculusTexture  * pEyeRenderTexture[2] = { nullptr, nullptr };
 		int msaaRate = 4;
 
 		// Initializes LibOVR, and the Rift
@@ -551,9 +407,8 @@ private:
 		ovrResult result = ovr_Initialize(&initParams);
 		VALIDATE(OVR_SUCCESS(result), "Failed to initialize libOVR.");
 
-		ovrSession session;
 		ovrGraphicsLuid luid;
-		result = ovr_Create(&session, &luid);
+		result = ovr_Create(&m_pOvrSession, &luid);
 		VALIDATE(OVR_SUCCESS(result), "Failed to create ovr session.");
 
 
@@ -613,28 +468,24 @@ private:
 		// Now setup all the views and bind the target.
 		SetupRenderTarget(width, height);
 
-		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(session);
-
+		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(m_pOvrSession);
 		// Make the eye render buffers (caution if actual size < requested due to HW limits).
-		ovrRecti         eyeRenderViewport[2];
 		for (int eye = 0; eye < 2; ++eye)
 		{
-			ovrSizei idealSize = ovr_GetFovTextureSize(session, (ovrEyeType)eye, hmdDesc.DefaultEyeFov[eye], 1.0f);
-			pEyeRenderTexture[eye] = new OculusTexture();
-			if (!pEyeRenderTexture[eye]->Init(session, idealSize.w, idealSize.h, msaaRate, true, m_pD3DDevice.Get()))
+			ovrSizei idealSize = ovr_GetFovTextureSize(m_pOvrSession, (ovrEyeType)eye, hmdDesc.DefaultEyeFov[eye], 1.0f);
+			m_pOvrEyeRenderTexture[eye] = new OculusTexture();
+			if (!m_pOvrEyeRenderTexture[eye]->Init(m_pOvrSession, idealSize.w, idealSize.h, msaaRate, true, m_pD3DDevice.Get()))
 			{
 				panicF("Failed to create eye texture.");
 			}
-			eyeRenderViewport[eye].Pos.x = 0;
-			eyeRenderViewport[eye].Pos.y = 0;
-			eyeRenderViewport[eye].Size = idealSize;
-			if (!pEyeRenderTexture[eye]->TextureChain || !pEyeRenderTexture[eye]->DepthTextureChain)
+			m_pOvrEyeRenderViewport[eye].Pos.x = 0;
+			m_pOvrEyeRenderViewport[eye].Pos.y = 0;
+			m_pOvrEyeRenderViewport[eye].Size = idealSize;
+			if (!m_pOvrEyeRenderTexture[eye]->TextureChain || !m_pOvrEyeRenderTexture[eye]->DepthTextureChain)
 			{
 				panicF("Failed to create texture.");
 			}
 		}
-
-		m_pOvrSession = session;
 
 	}
 
@@ -1381,6 +1232,9 @@ int framework_main(FrameworkApp& rApp, const char* pTitleString, HINSTANCE hInst
 	systems.pD3DContext = renderWindow.m_pDeviceContext.Get();
 	systems.pSwapRenderTarget = renderWindow.m_pRenderTargetView.Get();
 	systems.pOvrSession = &renderWindow.m_pOvrSession;
+	systems.pEyeRenderViewport = renderWindow.m_pOvrEyeRenderViewport;
+	systems.pEyeRenderTexture[0] = renderWindow.m_pOvrEyeRenderTexture[0];
+	systems.pEyeRenderTexture[1] = renderWindow.m_pOvrEyeRenderTexture[1];
 	systems.pCamera = &camera;
 	systems.width = Window::s_width;
 	systems.height = Window::s_height;

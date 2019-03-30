@@ -175,6 +175,7 @@
     <ClInclude Include="Framework.h" />
     <ClInclude Include="JobQueue.h" />
     <ClInclude Include="Mesh.h" />
+    <ClInclude Include="OculusTexture.h" />
     <ClInclude Include="ShaderSet.h" />
     <ClInclude Include="Texture.h" />
     <ClInclude Include="VertexFormats.h" />
