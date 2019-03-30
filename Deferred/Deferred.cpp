@@ -423,13 +423,18 @@ public:
 
 			// Get view and projection matrices for the Rift camera
 
-			XMVECTOR CombinedPos = XMVectorAdd(XMLoadFloat3(&systems.pCamera->eye), XMVector3Rotate(eyePos, XMLoadFloat3(&systems.pCamera->right)));
+			//TODO rotate by the cameras rot quarternion instead of right
+			XMVECTOR CombinedPos = XMVectorAdd(XMLoadFloat3(&systems.pCamera->eye), XMVector3Rotate(eyePos, XMLoadFloat3(&systems.pCamera->forward)));
 
 			Camera c;
 			c.eye = CombinedPos;
-			c.up = XMQuaternionMultiply(eyeQuat, XMQuaternionRotationRollPitchYawFromVector(systems.pCamera->up));
-			c.forward = XMQuaternionMultiply(eyeQuat, XMQuaternionRotationRollPitchYawFromVector(systems.pCamera->forward));;
-			c.right = XMQuaternionMultiply(eyeQuat, XMQuaternionRotationRollPitchYawFromVector(systems.pCamera->right));;
+			//TODO covert back to normal
+			c.forward = XMQuaternionMultiply(eyeQuat, XMQuaternionRotationRollPitchYawFromVector(systems.pCamera->forward));
+			c.right = systems.pCamera->right;
+			c.up = systems.pCamera->up;
+			systems.pCamera->forward = c.forward;
+			systems.pCamera->right = c.right;
+			systems.pCamera->up = c.up;
 			c.updateMatrices();
 			XMMATRIX view = c.viewMatrix;
 			ovrMatrix4f p = ovrMatrix4f_Projection(eyeRenderDesc[eye].Fov, 0.2f, 1000.0f, ovrProjection_None);
@@ -464,7 +469,7 @@ public:
 
 				// Compute MVP matrix.
 				m4x4 matModel = m4x4::CreateTranslation(0.f, 0.f, 0.f);
-				m4x4 matMVP = matModel * systems.pCamera->vpMatrix;
+				m4x4 matMVP = matModel * prod;
 
 				// Update Per Draw Data
 				m_perDrawCBData.m_matMVP = matMVP.Transpose();
