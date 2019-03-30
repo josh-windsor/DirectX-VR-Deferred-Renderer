@@ -286,6 +286,16 @@ public:
 		}
 
 
+
+		//VR Implementation 
+		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(*systems.pOvrSession);
+
+		// Call ovr_GetRenderDesc each frame to get the ovrEyeRenderDesc, as the returned values (e.g. HmdToEyePose) may change at runtime.
+		ovrEyeRenderDesc eyeRenderDesc[2];
+		eyeRenderDesc[0] = ovr_GetRenderDesc(*systems.pOvrSession, ovrEye_Left, hmdDesc.DefaultEyeFov[0]);
+		eyeRenderDesc[1] = ovr_GetRenderDesc(*systems.pOvrSession, ovrEye_Right, hmdDesc.DefaultEyeFov[1]);
+
+
 		//=======================================================================================
 		// The Geometry Pass.
 		// Draw our scene into the GBuffer, capturing all the information we need for lighting.

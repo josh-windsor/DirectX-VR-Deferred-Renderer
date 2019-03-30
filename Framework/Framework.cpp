@@ -26,11 +26,11 @@
 #define VALIDATE(x, msg) if (!(x)) { MessageBoxA(nullptr, (msg), "JW_STGA", MB_ICONERROR | MB_OK); exit(-1); }
 #endif
 
+
 // ========================================================
 // IMGUI
 // ========================================================
 #include "imgui/imgui_impl_dx11.h"
-#include <OVR_CAPI.h>
 // This is Imgui IO handler which is defined elsewhere.
 extern IMGUI_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -476,6 +476,7 @@ public:
 	ComPtr<ID3D11DepthStencilView> m_pDepthStencilView;
 	ComPtr<ID3D11RenderTargetView> m_pRenderTargetView;
 	ComPtr<ID3D11DepthStencilState> m_pDepthStencilState;
+	ovrSession m_pOvrSession;
 
 	std::function<void()>          m_pRenderCallback;
 	std::function<void(u32, u32)>  m_pResizeCallback;
@@ -568,23 +569,6 @@ private:
 		createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif // DEBUG
 
-		// Acceptable driver types.
-		const D3D_DRIVER_TYPE driverTypes[] = {
-			D3D_DRIVER_TYPE_HARDWARE,
-			D3D_DRIVER_TYPE_WARP,
-			D3D_DRIVER_TYPE_REFERENCE,
-		};
-		const UINT numDriverTypes = ARRAYSIZE(driverTypes);
-
-		// This array defines the ordering of feature levels that D3D should attempt to create.
-		const D3D_FEATURE_LEVEL featureLevels[] = {
-			D3D_FEATURE_LEVEL_11_1,
-			D3D_FEATURE_LEVEL_11_0,
-			D3D_FEATURE_LEVEL_10_1,
-			D3D_FEATURE_LEVEL_10_0,
-		};
-		const UINT numFeatureLevels = ARRAYSIZE(featureLevels);
-
 		DXGI_SWAP_CHAIN_DESC sd = { 0 };
 		sd.BufferCount = 2;
 		sd.BufferDesc.Width = width;
@@ -617,7 +601,7 @@ private:
 
 		auto DriverType = Adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
 
-		hr = D3D11CreateDevice(Adapter, DriverType, 0, 0, 0, 0, D3D11_SDK_VERSION, m_pD3DDevice.GetAddressOf(), nullptr, m_pDeviceContext.GetAddressOf());
+		hr = D3D11CreateDevice(Adapter, DriverType, 0, createDeviceFlags, 0, 0, D3D11_SDK_VERSION, m_pD3DDevice.GetAddressOf(), nullptr, m_pDeviceContext.GetAddressOf());
 		Adapter->Release();
 		if (FAILED(hr))panicF("Failed to create D3D device!");
 
@@ -649,6 +633,8 @@ private:
 				panicF("Failed to create texture.");
 			}
 		}
+
+		m_pOvrSession = session;
 
 	}
 
@@ -1394,6 +1380,7 @@ int framework_main(FrameworkApp& rApp, const char* pTitleString, HINSTANCE hInst
 	systems.pD3DDevice = renderWindow.m_pD3DDevice.Get();
 	systems.pD3DContext = renderWindow.m_pDeviceContext.Get();
 	systems.pSwapRenderTarget = renderWindow.m_pRenderTargetView.Get();
+	systems.pOvrSession = &renderWindow.m_pOvrSession;
 	systems.pCamera = &camera;
 	systems.width = Window::s_width;
 	systems.height = Window::s_height;

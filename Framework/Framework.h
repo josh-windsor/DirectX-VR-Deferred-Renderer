@@ -6,6 +6,7 @@
 //================================================================================================
 
 #include "CommonHeader.h"
+#include <OVR_CAPI.h>
 
 //================================================================================
 // Time releated functions
@@ -127,6 +128,7 @@ struct SystemsInterface
 	ID3D11Device* pD3DDevice;
 	ID3D11DeviceContext* pD3DContext;
 	ID3D11RenderTargetView* pSwapRenderTarget; // 
+	ovrSession* pOvrSession;
 	dd::ContextHandle pDebugDrawContext;
 	Camera* pCamera;
 	u32 width;
