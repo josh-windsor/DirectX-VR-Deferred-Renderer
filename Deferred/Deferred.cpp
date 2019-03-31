@@ -422,21 +422,11 @@ public:
 			XMVECTOR eyePos = XMVectorSet(EyeRenderPose[eye].Position.x, EyeRenderPose[eye].Position.y, EyeRenderPose[eye].Position.z, 0);
 
 			// Get view and projection matrices for the Rift camera
+			XMVECTOR camRot = XMQuaternionRotationMatrix(systems.pCamera->viewMatrix);
+			XMVECTOR combinedPos = XMVectorAdd(XMLoadFloat3(&systems.pCamera->eye), XMVector3Rotate(eyePos, camRot));
 
-			//TODO rotate by the cameras rot quarternion instead of right
-			XMVECTOR CombinedPos = XMVectorAdd(XMLoadFloat3(&systems.pCamera->eye), XMVector3Rotate(eyePos, XMLoadFloat3(&systems.pCamera->forward)));
-
-			Camera c;
-			c.eye = CombinedPos;
-			//TODO covert back to normal
-			c.forward = XMQuaternionMultiply(eyeQuat, XMQuaternionRotationRollPitchYawFromVector(systems.pCamera->forward));
-			c.right = systems.pCamera->right;
-			c.up = systems.pCamera->up;
-			systems.pCamera->forward = c.forward;
-			systems.pCamera->right = c.right;
-			systems.pCamera->up = c.up;
-			c.updateMatrices();
-			XMMATRIX view = c.viewMatrix;
+			XMVECTOR finalCamRot = XMQuaternionMultiply(eyeQuat, camRot);
+			XMMATRIX view = XMMatrixMultiply(XMMatrixTranslationFromVector(combinedPos), XMMatrixRotationQuaternion(finalCamRot));
 			ovrMatrix4f p = ovrMatrix4f_Projection(eyeRenderDesc[eye].Fov, 0.2f, 1000.0f, ovrProjection_None);
 			posTimewarpProjectionDesc = ovrTimewarpProjectionDesc_FromProjection(p, ovrProjection_None);
 			XMMATRIX proj = XMMatrixSet(p.M[0][0], p.M[1][0], p.M[2][0], p.M[3][0],
