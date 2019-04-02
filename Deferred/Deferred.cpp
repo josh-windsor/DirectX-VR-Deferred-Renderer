@@ -260,6 +260,11 @@ public:
 			context->ClearDepthStencilView(depthStencil, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1, 0);
 	}
 
+	void renderScene(SystemsInterface& systems, XMMATRIX finalViewMatrix)
+	{
+		
+	}
+
 	void on_render(SystemsInterface& systems) override
 	{
 		ovrSessionStatus sessionStatus;
@@ -321,15 +326,15 @@ public:
 
 		ovrTimewarpProjectionDesc posTimewarpProjectionDesc = {};
 
+		XMMATRIX finalViewMatrix[2];
+
+		static bool bStereoInstancing = false;
+		ImGui::Checkbox("Enable Stero Rendering: ", &bStereoInstancing);
+
 		// Render Scene to Eye Buffers
 		for (int eye = 0; eye < 2; ++eye)
 		{
 			SetAndClearRenderTarget(systems.pEyeRenderTexture[eye]->GetRTV(), systems.pEyeRenderTexture[eye]->GetDSV(), systems.pD3DContext);
-			D3D11_VIEWPORT D3Dvp;
-			D3Dvp.Width = (float)systems.pEyeRenderViewport[eye].Size.w;    D3Dvp.Height = (float)systems.pEyeRenderViewport[eye].Size.h;
-			D3Dvp.MinDepth = 0;   D3Dvp.MaxDepth = 1;
-			D3Dvp.TopLeftX = (float)systems.pEyeRenderViewport[eye].Pos.x; D3Dvp.TopLeftY = (float)systems.pEyeRenderViewport[eye].Pos.y;
-			systems.pD3DContext->RSSetViewports(1, &D3Dvp);
 			//Get the pose information in XM format
 			XMVECTOR eyeQuat = XMVectorSet(EyeRenderPose[eye].Orientation.x, EyeRenderPose[eye].Orientation.y,
 				EyeRenderPose[eye].Orientation.z, EyeRenderPose[eye].Orientation.w);
@@ -353,9 +358,25 @@ public:
 				p.M[0][1], p.M[1][1], p.M[2][1], p.M[3][1],
 				p.M[0][2], p.M[1][2], p.M[2][2], p.M[3][2],
 				p.M[0][3], p.M[1][3], p.M[2][3], p.M[3][3]);
-			XMMATRIX prod = XMMatrixMultiply(view, proj);
+
+			if (bStereoInstancing)
+			{
+				// scale and offset projection matrix to shift image to correct part of texture for each eye
+				proj = XMMatrixMultiply(proj, XMMatrixScaling(0.5f, 1.0f, 1.0f));
+				proj = XMMatrixMultiply(proj, XMMatrixTranslation(eye == 0 ? -0.5f : 0.5f, 0.0f, 0.0f));
+			}
 
 
+			finalViewMatrix[eye] = XMMatrixMultiply(view, proj);
+		}
+
+		if (bStereoInstancing)
+		{
+			D3D11_VIEWPORT D3Dvp;
+			D3Dvp.Width = (float)systems.pEyeRenderViewport[0].Size.w + systems.pEyeRenderViewport[1].Size.w;    D3Dvp.Height = (float)systems.pEyeRenderViewport[0].Size.h;
+			D3Dvp.MinDepth = 0;   D3Dvp.MaxDepth = 1;
+			D3Dvp.TopLeftX = 0; D3Dvp.TopLeftY = 0;
+			systems.pD3DContext->RSSetViewports(1, &D3Dvp);
 			// Bind our geometry pass shader.
 			m_geometryPassShader.bind(systems.pD3DContext);
 
@@ -379,7 +400,7 @@ public:
 
 				// Compute MVP matrix.
 				m4x4 matModel = m4x4::CreateTranslation(0.f, 0.f, 0.f);
-				m4x4 matMVP = matModel * prod;
+				m4x4 matMVP = matModel * finalViewMatrix[0];
 
 				// Update Per Draw Data
 				m_perDrawCBData.m_matMVP = matMVP.Transpose();
@@ -408,7 +429,7 @@ public:
 				{
 					// Compute MVP matrix.
 					m4x4 matModel = m4x4::CreateTranslation(v3(j * kGridSpacing, i * kGridSpacing, 0.f));
-					m4x4 matMVP = matModel * prod;
+					m4x4 matMVP = matModel * finalViewMatrix[0];
 
 					// Update Per Draw Data
 					m_perDrawCBData.m_matMVP = matMVP.Transpose();
@@ -429,8 +450,8 @@ public:
 
 			// Bind the swap chain (back buffer) to the render target
 			// Make sure to unbind other gbuffer targets and depth
-			ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture[eye]->GetRTV() };
-			systems.pD3DContext->OMSetRenderTargets(1, views, systems.pEyeRenderTexture[eye]->GetDSV());
+			ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture[0]->GetRTV() };
+			systems.pD3DContext->OMSetRenderTargets(1, views, systems.pEyeRenderTexture[0]->GetDSV());
 
 			// Bind our GBuffer textures as inputs to the pixel shader
 			systems.pD3DContext->PSSetShaderResources(0, 1, m_pGBufferTextureViews);
@@ -474,7 +495,7 @@ public:
 					// Compute Light MVP matrix.
 					m4x4 matModel = m4x4::CreateScale(rLight.m_shaderInfo.m_vAtt.w);
 					matModel *= m4x4::CreateTranslation(v3(rLight.m_shaderInfo.m_vPosition));
-					m4x4 matMVP = matModel * prod;
+					m4x4 matMVP = matModel * finalViewMatrix[0];
 
 					// Update Per Draw Data
 					m_perDrawCBData.m_matMVP = matMVP.Transpose();
@@ -495,16 +516,175 @@ public:
 
 			}
 			// Commit rendering to the swap chain
-			systems.pEyeRenderTexture[eye]->Commit();
+			systems.pEyeRenderTexture[0]->Commit();
 
 			// Unbind all the SRVs because we need them as targets next frame
 			ID3D11ShaderResourceView* srvClear[] = { 0,0,0 };
 			systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
 			// re-bind depth for debugging output.
 			systems.pD3DContext->OMSetRenderTargets(1, views, m_pGBufferDepthView);
-
-
 		}
+		else
+		{
+			for (int eye = 0; eye < 2; ++eye)
+			{
+
+				D3D11_VIEWPORT D3Dvp;
+				D3Dvp.Width = (float)systems.pEyeRenderViewport[eye].Size.w;    D3Dvp.Height = (float)systems.pEyeRenderViewport[eye].Size.h;
+				D3Dvp.MinDepth = 0;   D3Dvp.MaxDepth = 1;
+				D3Dvp.TopLeftX = (float)systems.pEyeRenderViewport[eye].Pos.x; D3Dvp.TopLeftY = (float)systems.pEyeRenderViewport[eye].Pos.y;
+				systems.pD3DContext->RSSetViewports(1, &D3Dvp);
+
+				// Bind our geometry pass shader.
+				m_geometryPassShader.bind(systems.pD3DContext);
+
+				// Bind Constant Buffers, to both PS and VS stages
+				ID3D11Buffer* buffers[] = { m_pPerFrameCB, m_pPerDrawCB };
+				systems.pD3DContext->VSSetConstantBuffers(0, 2, buffers);
+				systems.pD3DContext->PSSetConstantBuffers(0, 2, buffers);
+
+				// Bind a sampler state
+				ID3D11SamplerState* samplers[] = { m_pSamplerState };
+				systems.pD3DContext->PSSetSamplers(0, 1, samplers);
+
+
+				// Opaque blend
+				systems.pD3DContext->OMSetBlendState(m_pBlendStates[BlendStates::kOpaque], kBlendFactor, kSampleMask);
+
+				// draw a plane
+				{
+					m_plane.bind(systems.pD3DContext);
+					m_textureArray[0].bind(systems.pD3DContext, ShaderStage::kPixel, 0);
+
+					// Compute MVP matrix.
+					m4x4 matModel = m4x4::CreateTranslation(0.f, 0.f, 0.f);
+					m4x4 matMVP = matModel * finalViewMatrix[eye];
+
+					// Update Per Draw Data
+					m_perDrawCBData.m_matMVP = matMVP.Transpose();
+
+					// Push to GPU
+					push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
+
+					// Draw the mesh.
+					m_plane.draw(systems.pD3DContext);
+
+				}
+
+				//DRAW
+				constexpr f32 kGridSpacing = 1.5f;
+				constexpr u32 kNumInstances = 5;
+				constexpr u32 kNumModelTypes = 2;
+
+				for (u32 i = 0; i < kNumModelTypes; ++i)
+				{
+					// Bind a mesh and texture.
+					m_meshArray[i].bind(systems.pD3DContext);
+					m_textureArray[i].bind(systems.pD3DContext, ShaderStage::kPixel, 0);
+
+					// Draw several instances
+					for (u32 j = 0; j < kNumInstances; ++j)
+					{
+						// Compute MVP matrix.
+						m4x4 matModel = m4x4::CreateTranslation(v3(j * kGridSpacing, i * kGridSpacing, 0.f));
+						m4x4 matMVP = matModel * finalViewMatrix[eye];
+
+						// Update Per Draw Data
+						m_perDrawCBData.m_matMVP = matMVP.Transpose();
+
+						// Push to GPU
+						push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
+
+						// Draw the mesh.
+						m_meshArray[i].draw(systems.pD3DContext);
+					}
+				}
+
+				//=======================================================================================
+				// The Lighting
+				// Read the GBuffer textures, and "draw" light volumes for each of our lights.
+				// We use additive blending on the result.
+				//=======================================================================================
+
+				// Bind the swap chain (back buffer) to the render target
+				// Make sure to unbind other gbuffer targets and depth
+				ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture[eye]->GetRTV() };
+				systems.pD3DContext->OMSetRenderTargets(1, views, systems.pEyeRenderTexture[eye]->GetDSV());
+
+				// Bind our GBuffer textures as inputs to the pixel shader
+				systems.pD3DContext->PSSetShaderResources(0, 1, m_pGBufferTextureViews);
+
+				// if we are not debugging the we bind the lighting shader and start accumulating light volumes.
+				// bind the light constant buffer
+				systems.pD3DContext->PSSetConstantBuffers(2, 1, &m_pLightInfoCB);
+
+				// Additive blend so we accumulate
+				systems.pD3DContext->OMSetBlendState(m_pBlendStates[BlendStates::kAdditive], kBlendFactor, kSampleMask);
+
+				static v4 tuneAtt(0.001f, 0.1f, 15.0f, 0.5f);
+				ImGui::DragFloat4("Light Att", (float*)&tuneAtt, 0.0001, 5.0f);
+
+
+				static int maxLights = m_lights.size();
+				ImGui::SliderInt("Lights", &maxLights, 0, m_lights.size());
+
+				for (u32 i = 0; i < (u32)maxLights; ++i)
+				{
+					auto& rLight(m_lights[i]);
+					// For drawing a directional light which hits everywhere we draw a full screen quad.
+
+					// Update and the light info constants.
+				//	rLight.m_shaderInfo.m_vAtt = tuneAtt;
+					push_constant_buffer(systems.pD3DContext, m_pLightInfoCB, rLight.m_shaderInfo);
+
+					switch (rLight.m_type)
+					{
+					case kLightType_Directional:
+					{
+						m_directionalLightShader.bind(systems.pD3DContext);
+						m_fullScreenQuad.bind(systems.pD3DContext);
+						m_fullScreenQuad.draw(systems.pD3DContext);
+					}
+					break;
+					case kLightType_Point:
+					{
+						m_pointLightShader.bind(systems.pD3DContext);
+
+						// Compute Light MVP matrix.
+						m4x4 matModel = m4x4::CreateScale(rLight.m_shaderInfo.m_vAtt.w);
+						matModel *= m4x4::CreateTranslation(v3(rLight.m_shaderInfo.m_vPosition));
+						m4x4 matMVP = matModel * finalViewMatrix[eye];
+
+						// Update Per Draw Data
+						m_perDrawCBData.m_matMVP = matMVP.Transpose();
+						push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
+
+						m_lightVolumeSphere.bind(systems.pD3DContext);
+						m_lightVolumeSphere.draw(systems.pD3DContext);
+					}
+					break;
+					case kLightType_Spot:
+						break;
+					default:
+						break;
+
+					}
+
+
+
+				}
+				// Commit rendering to the swap chain
+				systems.pEyeRenderTexture[eye]->Commit();
+
+				// Unbind all the SRVs because we need them as targets next frame
+				ID3D11ShaderResourceView* srvClear[] = { 0,0,0 };
+				systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
+				// re-bind depth for debugging output.
+				systems.pD3DContext->OMSetRenderTargets(1, views, m_pGBufferDepthView);
+			}
+		}
+		
+		
 
 		// Initialize our single full screen Fov layer.
 		ovrLayerEyeFovDepth ld = {};
