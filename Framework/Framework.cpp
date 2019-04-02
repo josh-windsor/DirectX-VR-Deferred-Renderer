@@ -347,7 +347,6 @@ public:
 	void onRender() override
 	{
 		const float clearColor[] = { 0, 0, 0, 0.f };
-		m_pDeviceContext->ClearRenderTargetView(m_pRenderTargetView.Get(), clearColor);
 
 		m_pDeviceContext->ClearDepthStencilView(m_pDepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
 
@@ -355,7 +354,7 @@ public:
 		{
 			m_pRenderCallback();
 		}	
-		m_pSwapChain->Present(1, 0); // use VSYNC
+		m_pSwapChain->Present(1, 0); // use VSYNC*/
 	}
 
 	void onResize() override
@@ -390,7 +389,7 @@ public:
 		}
 
 		// Now setup all the views and bind the target.
-		SetupRenderTarget(width, height);
+		//SetupRenderTarget(width, height);
 
 		m_pResizeCallback(width, height);
 	}
@@ -438,7 +437,6 @@ private:
 
 
 		HRESULT hr;
-		D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
 
 		IDXGIFactory * DXGIFactory = nullptr;
 		hr = CreateDXGIFactory1(__uuidof(IDXGIFactory), (void**)(&DXGIFactory));
@@ -466,7 +464,7 @@ private:
 
 
 		// Now setup all the views and bind the target.
-		SetupRenderTarget(width, height);
+		//SetupRenderTarget(width, height);
 
 		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(m_pOvrSession);
 		// Make the eye render buffers (caution if actual size < requested due to HW limits).
@@ -485,6 +483,78 @@ private:
 			{
 				panicF("Failed to create texture.");
 			}
+
+
+
+			// Create a render target view for the framebuffer:
+			// Create backbuffer
+			ID3D11Texture2D * backBuffer = nullptr;
+			hr = m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
+			if (FAILED(hr)) { panicF("Failed to get framebuffer from swap chain!"); }
+			ID3D11RenderTargetView* targets[] = { m_pOvrEyeRenderTexture[eye]->GetRTV() };
+
+			hr = m_pD3DDevice->CreateRenderTargetView(backBuffer, NULL, targets);
+			backBuffer->Release();
+			if (FAILED(hr)) { panicF("Failed to create Render Target View for framebuffer!"); }
+
+			// Create the Depth buffer.
+					// Create a depth buffer
+			D3D11_TEXTURE2D_DESC descDepth;
+			descDepth.Width = width;
+			descDepth.Height = height;
+			descDepth.MipLevels = 1;
+			descDepth.ArraySize = 1;
+			descDepth.Format = DXGI_FORMAT_D32_FLOAT;
+			descDepth.SampleDesc.Count = 1;
+			descDepth.SampleDesc.Quality = 0;
+			descDepth.Usage = D3D11_USAGE_DEFAULT;
+			descDepth.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+			descDepth.CPUAccessFlags = 0;
+			descDepth.MiscFlags = 0;
+			hr = m_pD3DDevice->CreateTexture2D(&descDepth, NULL, m_pDepthStencil.GetAddressOf());
+			if (FAILED(hr))
+			{
+				panicF("Failed to create Depth Buffer swap chain!");
+			}
+
+			hr = m_pD3DDevice->CreateDepthStencilView(m_pDepthStencil.Get(), NULL, m_pDepthStencilView.GetAddressOf());
+			if (FAILED(hr))
+			{
+				panicF("Failed to create Depth Stencil View for framebuffer!");
+			}
+			
+			m_pDeviceContext->OMSetRenderTargets(1, targets, m_pOvrEyeRenderTexture[eye]->GetDSV());
+
+
+
+			// setup the depth stencil state.
+			D3D11_DEPTH_STENCIL_DESC dsDesc;
+
+			// Depth test parameters
+			dsDesc.DepthEnable = true;
+			dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+			dsDesc.DepthFunc = D3D11_COMPARISON_LESS;
+
+			// Stencil test parameters
+			dsDesc.StencilEnable = false;
+			dsDesc.StencilReadMask = 0xFF;
+			dsDesc.StencilWriteMask = 0xFF;
+
+			// Stencil operations if pixel is front-facing
+			dsDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+			dsDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_INCR;
+			dsDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+			dsDesc.FrontFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
+
+			// Stencil operations if pixel is back-facing
+			dsDesc.BackFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+			dsDesc.BackFace.StencilDepthFailOp = D3D11_STENCIL_OP_DECR;
+			dsDesc.BackFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+			dsDesc.BackFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
+
+			// Create depth stencil state
+			m_pD3DDevice->CreateDepthStencilState(&dsDesc, m_pDepthStencilState.GetAddressOf());
+			m_pDeviceContext->OMSetDepthStencilState(m_pDepthStencilState.Get(), 0);
 		}
 
 	}

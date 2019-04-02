@@ -303,92 +303,6 @@ public:
 			dd::cross(ctx, (const float*)& rLight.m_shaderInfo.m_vPosition, 0.2f);
 		}
 
-
-
-		
-
-		//=======================================================================================
-		// The Geometry Pass.
-		// Draw our scene into the GBuffer, capturing all the information we need for lighting.
-		//=======================================================================================
-
-		// Bind the G Buffer to the output merger
-		// Here we are binding multiple render targets (MRT)
-		systems.pD3DContext->OMSetRenderTargets(kMaxGBufferColourTargets, m_pGBufferTargetViews, m_pGBufferDepthView);
-
-		// Clear colour and depth
-		f32 clearValue[] = { 0.f, 0.f, 0.f, 0.f };
-		systems.pD3DContext->ClearRenderTargetView(m_pGBufferTargetViews[kGBufferColourSpec], clearValue);
-		f32 normalClearValue[] = { 0.5f, 0.5f, 0.5f, 0.f };
-		systems.pD3DContext->ClearRenderTargetView(m_pGBufferTargetViews[kGBufferNormalPow], normalClearValue);
-		systems.pD3DContext->ClearDepthStencilView(m_pGBufferDepthView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
-
-		// Bind our geometry pass shader.
-		m_geometryPassShader.bind(systems.pD3DContext);
-
-		// Bind Constant Buffers, to both PS and VS stages
-		ID3D11Buffer* buffers[] = { m_pPerFrameCB, m_pPerDrawCB };
-		systems.pD3DContext->VSSetConstantBuffers(0, 2, buffers);
-		systems.pD3DContext->PSSetConstantBuffers(0, 2, buffers);
-
-		// Bind a sampler state
-		ID3D11SamplerState* samplers[] = { m_pSamplerState };
-		systems.pD3DContext->PSSetSamplers(0, 1, samplers);
-
-
-		// Opaque blend
-		systems.pD3DContext->OMSetBlendState(m_pBlendStates[BlendStates::kOpaque], kBlendFactor, kSampleMask);
-
-		// draw a plane
-		{			
-			m_plane.bind(systems.pD3DContext);
-			m_textureArray[0].bind(systems.pD3DContext, ShaderStage::kPixel, 0);
-
-			// Compute MVP matrix.
-			m4x4 matModel = m4x4::CreateTranslation(0.f, 0.f, 0.f);
-			m4x4 matMVP = matModel * systems.pCamera->vpMatrix;
-
-			// Update Per Draw Data
-			m_perDrawCBData.m_matMVP = matMVP.Transpose();
-
-			// Push to GPU
-			push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
-
-			// Draw the mesh.
-			m_plane.draw(systems.pD3DContext);
-
-		}
-
-
-		constexpr f32 kGridSpacing = 1.5f;
-		constexpr u32 kNumInstances = 5;
-		constexpr u32 kNumModelTypes = 2;
-
-		for (u32 i = 0; i < kNumModelTypes; ++i)
-		{
-			// Bind a mesh and texture.
-			m_meshArray[i].bind(systems.pD3DContext);
-			m_textureArray[i].bind(systems.pD3DContext, ShaderStage::kPixel, 0);
-
-			// Draw several instances
-			for (u32 j = 0; j < kNumInstances; ++j)
-			{
-				// Compute MVP matrix.
-				m4x4 matModel = m4x4::CreateTranslation(v3(j * kGridSpacing, i * kGridSpacing, 0.f));
-				m4x4 matMVP = matModel * systems.pCamera->vpMatrix;
-
-				// Update Per Draw Data
-				m_perDrawCBData.m_matMVP = matMVP.Transpose();
-
-				// Push to GPU
-				push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
-
-				// Draw the mesh.
-				m_meshArray[i].draw(systems.pD3DContext);
-			}
-		}
-
-
 		//VR Implementation 
 		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(*systems.pOvrSession);
 
@@ -478,9 +392,6 @@ public:
 
 			}
 
-
-
-
 			//DRAW
 			constexpr f32 kGridSpacing = 1.5f;
 			constexpr u32 kNumInstances = 5;
@@ -510,66 +421,20 @@ public:
 				}
 			}
 
-			// Commit rendering to the swap chain
-			systems.pEyeRenderTexture[eye]->Commit();
+			//=======================================================================================
+			// The Lighting
+			// Read the GBuffer textures, and "draw" light volumes for each of our lights.
+			// We use additive blending on the result.
+			//=======================================================================================
 
-		}
+			// Bind the swap chain (back buffer) to the render target
+			// Make sure to unbind other gbuffer targets and depth
+			ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture[eye]->GetRTV() };
+			systems.pD3DContext->OMSetRenderTargets(1, views, systems.pEyeRenderTexture[eye]->GetDSV());
 
-		// Initialize our single full screen Fov layer.
-		ovrLayerEyeFovDepth ld = {};
-		ld.Header.Type = ovrLayerType_EyeFovDepth;
-		ld.Header.Flags = 0;
-		ld.ProjectionDesc = posTimewarpProjectionDesc;
-		ld.SensorSampleTime = sensorSampleTime;
+			// Bind our GBuffer textures as inputs to the pixel shader
+			systems.pD3DContext->PSSetShaderResources(0, 1, m_pGBufferTextureViews);
 
-		for (int eye = 0; eye < 2; ++eye)
-		{
-			ld.ColorTexture[eye] = systems.pEyeRenderTexture[eye]->TextureChain;
-			ld.DepthTexture[eye] = systems.pEyeRenderTexture[eye]->DepthTextureChain;
-			ld.Viewport[eye] = systems.pEyeRenderViewport[eye];
-			ld.Fov[eye] = hmdDesc.DefaultEyeFov[eye];
-			ld.RenderPose[eye] = EyeRenderPose[eye];
-		}
-
-		ovrLayerHeader* layers = &ld.Header;
-		result = ovr_SubmitFrame(*systems.pOvrSession, 0, nullptr, &layers, 1);
-		// exit the rendering loop if submit returns an error, will retry on ovrError_DisplayLost
-		if (!OVR_SUCCESS(result))
-			panicF("Fail Rendering Loop!");
-
-		//=======================================================================================
-		// The Lighting
-		// Read the GBuffer textures, and "draw" light volumes for each of our lights.
-		// We use additive blending on the result.
-		//=======================================================================================
-
-		// Bind the swap chain (back buffer) to the render target
-		// Make sure to unbind other gbuffer targets and depth
-		ID3D11RenderTargetView* views[] = { systems.pSwapRenderTarget, 0 };
-		systems.pD3DContext->OMSetRenderTargets(2, views, 0);
-
-		// Bind our GBuffer textures as inputs to the pixel shader
-		systems.pD3DContext->PSSetShaderResources(0, 3, m_pGBufferTextureViews);
-
-
-		// For exploring the GBuffer data we use a shader.
-		// Bind GBuffer Debugging shader.
-		static int sel = 0;
-		static bool bDebugEnabled = true;
-		ImGui::Checkbox("GBuffer Debug Enable", &bDebugEnabled);
-		if (bDebugEnabled)
-		{
-			const char* aModeNames[] = { "Albido","Normals","Specular","Position","Depth" };
-			ImGui::ListBox("GBuffer Debug Mode", &sel, aModeNames, kMaxGBufferDebugModes);
-
-			m_GBufferDebugShaders[sel].bind(systems.pD3DContext);
-
-			// ... and draw a full screen quad.
-			m_fullScreenQuad.bind(systems.pD3DContext);
-			m_fullScreenQuad.draw(systems.pD3DContext);
-		}
-		else
-		{
 			// if we are not debugging the we bind the lighting shader and start accumulating light volumes.
 			// bind the light constant buffer
 			systems.pD3DContext->PSSetConstantBuffers(2, 1, &m_pLightInfoCB);
@@ -607,9 +472,9 @@ public:
 					m_pointLightShader.bind(systems.pD3DContext);
 
 					// Compute Light MVP matrix.
-					m4x4 matModel = m4x4::CreateScale(rLight.m_shaderInfo.m_vAtt.w); 
+					m4x4 matModel = m4x4::CreateScale(rLight.m_shaderInfo.m_vAtt.w);
 					matModel *= m4x4::CreateTranslation(v3(rLight.m_shaderInfo.m_vPosition));
-					m4x4 matMVP = matModel * systems.pCamera->vpMatrix;
+					m4x4 matMVP = matModel * prod;
 
 					// Update Per Draw Data
 					m_perDrawCBData.m_matMVP = matMVP.Transpose();
@@ -627,17 +492,42 @@ public:
 				}
 
 
+
 			}
+			// Commit rendering to the swap chain
+			systems.pEyeRenderTexture[eye]->Commit();
+
+			// Unbind all the SRVs because we need them as targets next frame
+			ID3D11ShaderResourceView* srvClear[] = { 0,0,0 };
+			systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
+			// re-bind depth for debugging output.
+			systems.pD3DContext->OMSetRenderTargets(1, views, m_pGBufferDepthView);
+
+
 		}
 
+		// Initialize our single full screen Fov layer.
+		ovrLayerEyeFovDepth ld = {};
+		ld.Header.Type = ovrLayerType_EyeFovDepth;
+		ld.Header.Flags = 0;
+		ld.ProjectionDesc = posTimewarpProjectionDesc;
+		ld.SensorSampleTime = sensorSampleTime;
 
+		for (int eye = 0; eye < 2; ++eye)
+		{
+			ld.ColorTexture[eye] = systems.pEyeRenderTexture[eye]->TextureChain;
+			ld.DepthTexture[eye] = systems.pEyeRenderTexture[eye]->DepthTextureChain;
+			ld.Viewport[eye] = systems.pEyeRenderViewport[eye];
+			ld.Fov[eye] = hmdDesc.DefaultEyeFov[eye];
+			ld.RenderPose[eye] = EyeRenderPose[eye];
+		}
 
-		// Unbind all the SRVs because we need them as targets next frame
-		ID3D11ShaderResourceView* srvClear[] = { 0,0,0 };
-		systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
+		ovrLayerHeader* layers = &ld.Header;
+		result = ovr_SubmitFrame(*systems.pOvrSession, 0, nullptr, &layers, 1);
+		// exit the rendering loop if submit returns an error, will retry on ovrError_DisplayLost
+		if (!OVR_SUCCESS(result))
+			panicF("Fail Rendering Loop!");
 
-		// re-bind depth for debugging output.
-		systems.pD3DContext->OMSetRenderTargets(2, views, m_pGBufferDepthView);
 	}
 
 	void on_resize(SystemsInterface& systems) override
