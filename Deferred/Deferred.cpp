@@ -10,6 +10,7 @@ using namespace DirectX;
 constexpr float kBlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 constexpr UINT kSampleMask = 0xffffffff;
 constexpr u32 kLightGridSize = 24;
+long long frameIndex = 0;
 
 //================================================================================
 // Deferred Application
@@ -249,15 +250,13 @@ public:
 			}
 		}
 	}
-	void SetAndClearRenderTarget(ID3D11RenderTargetView * rendertarget, ID3D11DepthStencilView* depthStencil, ID3D11DeviceContext* context)
+	void SetAndClearRenderTarget(ID3D11RenderTargetView * rendertarget, ID3D11DeviceContext* context)
 	{
 		//Set & Clear buffers
 		f32 clearValue[] = { 0.f, 0.f, 0.f, 0.f };
 
-		context->OMSetRenderTargets(1, &rendertarget, depthStencil);
+		context->OMSetRenderTargets(1, &rendertarget, nullptr);
 		context->ClearRenderTargetView(rendertarget, clearValue);
-		if (depthStencil)
-			context->ClearDepthStencilView(depthStencil, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1, 0);
 	}
 
 	void renderScene(SystemsInterface& systems, XMMATRIX finalViewMatrix)
@@ -322,19 +321,19 @@ public:
 									 eyeRenderDesc[1].HmdToEyePose };
 
 		double sensorSampleTime;    // sensorSampleTime is fed into the layer later
-		ovr_GetEyePoses(*systems.pOvrSession, 0, ovrTrue, HmdToEyePose, EyeRenderPose, &sensorSampleTime);
+		ovr_GetEyePoses(*systems.pOvrSession, frameIndex, ovrTrue, HmdToEyePose, EyeRenderPose, &sensorSampleTime);
 
 		ovrTimewarpProjectionDesc posTimewarpProjectionDesc = {};
 
 		XMMATRIX finalViewMatrix[2];
 
-		static bool bStereoInstancing = false;
+		static bool bStereoInstancing = true;
 		ImGui::Checkbox("Enable Stero Rendering: ", &bStereoInstancing);
+		SetAndClearRenderTarget(systems.pEyeRenderTexture->GetRTV(), systems.pD3DContext);
 
 		// Render Scene to Eye Buffers
 		for (int eye = 0; eye < 2; ++eye)
 		{
-			SetAndClearRenderTarget(systems.pEyeRenderTexture[eye]->GetRTV(), systems.pEyeRenderTexture[eye]->GetDSV(), systems.pD3DContext);
 			//Get the pose information in XM format
 			XMVECTOR eyeQuat = XMVectorSet(EyeRenderPose[eye].Orientation.x, EyeRenderPose[eye].Orientation.y,
 				EyeRenderPose[eye].Orientation.z, EyeRenderPose[eye].Orientation.w);
@@ -450,8 +449,8 @@ public:
 
 			// Bind the swap chain (back buffer) to the render target
 			// Make sure to unbind other gbuffer targets and depth
-			ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture[0]->GetRTV() };
-			systems.pD3DContext->OMSetRenderTargets(1, views, systems.pEyeRenderTexture[0]->GetDSV());
+			ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture->GetRTV() };
+			systems.pD3DContext->OMSetRenderTargets(1, views, nullptr);
 
 			// Bind our GBuffer textures as inputs to the pixel shader
 			systems.pD3DContext->PSSetShaderResources(0, 1, m_pGBufferTextureViews);
@@ -516,13 +515,13 @@ public:
 
 			}
 			// Commit rendering to the swap chain
-			systems.pEyeRenderTexture[0]->Commit();
+			systems.pEyeRenderTexture->Commit();
 
 			// Unbind all the SRVs because we need them as targets next frame
 			ID3D11ShaderResourceView* srvClear[] = { 0,0,0 };
 			systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
 			// re-bind depth for debugging output.
-			systems.pD3DContext->OMSetRenderTargets(1, views, m_pGBufferDepthView);
+			systems.pD3DContext->OMSetRenderTargets(1, views, nullptr);
 		}
 		else
 		{
@@ -608,8 +607,8 @@ public:
 
 				// Bind the swap chain (back buffer) to the render target
 				// Make sure to unbind other gbuffer targets and depth
-				ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture[eye]->GetRTV() };
-				systems.pD3DContext->OMSetRenderTargets(1, views, systems.pEyeRenderTexture[eye]->GetDSV());
+				ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture->GetRTV() };
+				systems.pD3DContext->OMSetRenderTargets(1, views, nullptr);
 
 				// Bind our GBuffer textures as inputs to the pixel shader
 				systems.pD3DContext->PSSetShaderResources(0, 1, m_pGBufferTextureViews);
@@ -674,7 +673,7 @@ public:
 
 				}
 				// Commit rendering to the swap chain
-				systems.pEyeRenderTexture[eye]->Commit();
+				systems.pEyeRenderTexture->Commit();
 
 				// Unbind all the SRVs because we need them as targets next frame
 				ID3D11ShaderResourceView* srvClear[] = { 0,0,0 };
@@ -690,23 +689,22 @@ public:
 		ovrLayerEyeFovDepth ld = {};
 		ld.Header.Type = ovrLayerType_EyeFovDepth;
 		ld.Header.Flags = 0;
-		ld.ProjectionDesc = posTimewarpProjectionDesc;
+		//ld.ProjectionDesc = posTimewarpProjectionDesc;
 		ld.SensorSampleTime = sensorSampleTime;
 
 		for (int eye = 0; eye < 2; ++eye)
 		{
-			ld.ColorTexture[eye] = systems.pEyeRenderTexture[eye]->TextureChain;
-			ld.DepthTexture[eye] = systems.pEyeRenderTexture[eye]->DepthTextureChain;
+			ld.ColorTexture[eye] = systems.pEyeRenderTexture->TextureChain;
 			ld.Viewport[eye] = systems.pEyeRenderViewport[eye];
 			ld.Fov[eye] = hmdDesc.DefaultEyeFov[eye];
 			ld.RenderPose[eye] = EyeRenderPose[eye];
 		}
 
 		ovrLayerHeader* layers = &ld.Header;
-		result = ovr_SubmitFrame(*systems.pOvrSession, 0, nullptr, &layers, 1);
+		result = ovr_SubmitFrame(*systems.pOvrSession, frameIndex, nullptr, &layers, 1);
 		// exit the rendering loop if submit returns an error, will retry on ovrError_DisplayLost
 		if (!OVR_SUCCESS(result))
-			panicF("Fail Rendering Loop!");
+			panicF("%i Fail Rendering Loop", result);
 
 	}
 

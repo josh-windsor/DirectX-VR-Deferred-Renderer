@@ -332,7 +332,7 @@ public:
 	ComPtr<ID3D11DepthStencilState> m_pDepthStencilState;
 	ovrSession m_pOvrSession;
 	ovrRecti m_pOvrEyeRenderViewport[2];
-	OculusTexture* m_pOvrEyeRenderTexture[2] = {nullptr, nullptr};
+	OculusTexture* m_pOvrEyeRenderTexture = nullptr;
 
 
 	std::function<void()>          m_pRenderCallback;
@@ -348,7 +348,7 @@ public:
 	{
 		const float clearColor[] = { 0, 0, 0, 0.f };
 
-		m_pDeviceContext->ClearDepthStencilView(m_pDepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
+		//m_pDeviceContext->ClearDepthStencilView(m_pDepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
 
 		if (m_pRenderCallback)
 		{
@@ -467,9 +467,32 @@ private:
 		//SetupRenderTarget(width, height);
 
 		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(m_pOvrSession);
-		// Make the eye render buffers (caution if actual size < requested due to HW limits).
-		for (int eye = 0; eye < 2; ++eye)
+
+		//OLD non-stero instanced code 
+		//for (int eye = 0; eye < 2; ++eye)
 		{
+			ovrSizei eyeTexSizeL = ovr_GetFovTextureSize(m_pOvrSession, ovrEye_Left, hmdDesc.DefaultEyeFov[0], 1.0f);
+			ovrSizei eyeTexSizeR = ovr_GetFovTextureSize(m_pOvrSession, ovrEye_Right, hmdDesc.DefaultEyeFov[1], 1.0f);
+			ovrSizei textureSize;
+			textureSize.w = eyeTexSizeL.w + eyeTexSizeR.w;
+			textureSize.h = std::max(eyeTexSizeL.h, eyeTexSizeR.h);
+			m_pOvrEyeRenderTexture = new OculusTexture();
+			if (!m_pOvrEyeRenderTexture->Init(m_pOvrSession, textureSize.w, textureSize.h, m_pD3DDevice.Get()))
+			{
+				VALIDATE(OVR_SUCCESS(result), "Failed to create eye texture.");
+			}
+
+			m_pOvrEyeRenderViewport[0].Pos.x = 0;
+			m_pOvrEyeRenderViewport[0].Pos.y = 0;
+			m_pOvrEyeRenderViewport[0].Size = eyeTexSizeL;
+
+			m_pOvrEyeRenderViewport[1].Pos.x = eyeTexSizeL.w;
+			m_pOvrEyeRenderViewport[1].Pos.y = 0;
+			m_pOvrEyeRenderViewport[1].Size = eyeTexSizeR;
+
+
+			/* OLD non-stero instanced code
+
 			ovrSizei idealSize = ovr_GetFovTextureSize(m_pOvrSession, (ovrEyeType)eye, hmdDesc.DefaultEyeFov[eye], 1.0f);
 			m_pOvrEyeRenderTexture[eye] = new OculusTexture();
 			if (!m_pOvrEyeRenderTexture[eye]->Init(m_pOvrSession, idealSize.w, idealSize.h, msaaRate, true, m_pD3DDevice.Get()))
@@ -482,16 +505,17 @@ private:
 			if (!m_pOvrEyeRenderTexture[eye]->TextureChain || !m_pOvrEyeRenderTexture[eye]->DepthTextureChain)
 			{
 				panicF("Failed to create texture.");
-			}
-
-
+			}*/
+		}
+		for (int eye = 0; eye < 2; ++eye)
+		{
 
 			// Create a render target view for the framebuffer:
 			// Create backbuffer
 			ID3D11Texture2D * backBuffer = nullptr;
 			hr = m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
 			if (FAILED(hr)) { panicF("Failed to get framebuffer from swap chain!"); }
-			ID3D11RenderTargetView* targets[] = { m_pOvrEyeRenderTexture[eye]->GetRTV() };
+			ID3D11RenderTargetView* targets[] = { m_pOvrEyeRenderTexture->GetRTV() };
 
 			hr = m_pD3DDevice->CreateRenderTargetView(backBuffer, NULL, targets);
 			backBuffer->Release();
@@ -517,13 +541,13 @@ private:
 				panicF("Failed to create Depth Buffer swap chain!");
 			}
 
-			hr = m_pD3DDevice->CreateDepthStencilView(m_pDepthStencil.Get(), NULL, m_pDepthStencilView.GetAddressOf());
+			/*hr = m_pD3DDevice->CreateDepthStencilView(m_pDepthStencil.Get(), NULL, m_pDepthStencilView.GetAddressOf());
 			if (FAILED(hr))
 			{
 				panicF("Failed to create Depth Stencil View for framebuffer!");
-			}
+			}*/
 			
-			m_pDeviceContext->OMSetRenderTargets(1, targets, m_pOvrEyeRenderTexture[eye]->GetDSV());
+			m_pDeviceContext->OMSetRenderTargets(1, targets, nullptr);
 
 
 
@@ -574,7 +598,7 @@ private:
 		if (FAILED(hr)){panicF("Failed to create Render Target View for framebuffer!");}
 
 		// Create the Depth buffer.
-		CreateDepthBuffer(width, height);
+		//CreateDepthBuffer(width, height);
 
 
 		ID3D11RenderTargetView* targets[] = { m_pRenderTargetView.Get() };
@@ -1303,8 +1327,7 @@ int framework_main(FrameworkApp& rApp, const char* pTitleString, HINSTANCE hInst
 	systems.pSwapRenderTarget = renderWindow.m_pRenderTargetView.Get();
 	systems.pOvrSession = &renderWindow.m_pOvrSession;
 	systems.pEyeRenderViewport = renderWindow.m_pOvrEyeRenderViewport;
-	systems.pEyeRenderTexture[0] = renderWindow.m_pOvrEyeRenderTexture[0];
-	systems.pEyeRenderTexture[1] = renderWindow.m_pOvrEyeRenderTexture[1];
+	systems.pEyeRenderTexture = renderWindow.m_pOvrEyeRenderTexture;
 	systems.pCamera = &camera;
 	systems.width = Window::s_width;
 	systems.height = Window::s_height;
