@@ -509,6 +509,89 @@ public:
 					m_meshArray[i].draw(systems.pD3DContext);
 				}
 			}
+			//=======================================================================================
+			// The Lighting
+			// Read the GBuffer textures, and "draw" light volumes for each of our lights.
+			// We use additive blending on the result.
+			//=======================================================================================
+
+			// Bind the swap chain (back buffer) to the render target
+			// Make sure to unbind other gbuffer targets and depth
+			ID3D11RenderTargetView* views[] = { systems.pEyeRenderTexture[eye]->GetRTV(), 0 };
+			systems.pD3DContext->OMSetRenderTargets(2, views, 0);
+
+			// Bind our GBuffer textures as inputs to the pixel shader
+			systems.pD3DContext->PSSetShaderResources(0, 2, m_pGBufferTextureViews);
+
+
+			// For exploring the GBuffer data we use a shader.
+			// Bind GBuffer Debugging shader.
+			{
+				// if we are not debugging the we bind the lighting shader and start accumulating light volumes.
+				// bind the light constant buffer
+				systems.pD3DContext->PSSetConstantBuffers(2, 1, &m_pLightInfoCB);
+
+				// Additive blend so we accumulate
+				systems.pD3DContext->OMSetBlendState(m_pBlendStates[BlendStates::kAdditive], kBlendFactor, kSampleMask);
+
+				static v4 tuneAtt(0.001f, 0.1f, 15.0f, 0.5f);
+				ImGui::DragFloat4("Light Att", (float*)&tuneAtt, 0.0001, 5.0f);
+
+
+				static int maxLights = m_lights.size();
+				ImGui::SliderInt("Lights", &maxLights, 0, m_lights.size());
+
+				for (u32 i = 0; i < (u32)maxLights; ++i)
+				{
+					auto& rLight(m_lights[i]);
+					// For drawing a directional light which hits everywhere we draw a full screen quad.
+
+					// Update and the light info constants.
+				//	rLight.m_shaderInfo.m_vAtt = tuneAtt;
+					push_constant_buffer(systems.pD3DContext, m_pLightInfoCB, rLight.m_shaderInfo);
+
+					switch (rLight.m_type)
+					{
+					case kLightType_Directional:
+					{
+					}
+					break;
+					case kLightType_Point:
+					{
+						m_pointLightShader.bind(systems.pD3DContext);
+
+						// Compute Light MVP matrix.
+						m4x4 matModel = m4x4::CreateScale(rLight.m_shaderInfo.m_vAtt.w);
+						matModel *= m4x4::CreateTranslation(v3(rLight.m_shaderInfo.m_vPosition));
+						m4x4 matMVP = matModel * prod;
+
+						// Update Per Draw Data
+						m_perDrawCBData.m_matMVP = matMVP.Transpose();
+						push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
+
+						m_lightVolumeSphere.bind(systems.pD3DContext);
+						m_lightVolumeSphere.draw(systems.pD3DContext);
+					}
+					break;
+					case kLightType_Spot:
+						break;
+					default:
+						break;
+
+					}
+
+
+				}
+			}
+
+
+
+			// Unbind all the SRVs because we need them as targets next frame
+			ID3D11ShaderResourceView* srvClear[] = { 0,0,0 };
+			systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
+
+			// re-bind depth for debugging output.
+			systems.pD3DContext->OMSetRenderTargets(2, views, m_pGBufferDepthView);
 
 			// Commit rendering to the swap chain
 			systems.pEyeRenderTexture[eye]->Commit();
@@ -538,106 +621,7 @@ public:
 			panicF("Fail Rendering Loop!");
 
 		//=======================================================================================
-		// The Lighting
-		// Read the GBuffer textures, and "draw" light volumes for each of our lights.
-		// We use additive blending on the result.
-		//=======================================================================================
 
-		// Bind the swap chain (back buffer) to the render target
-		// Make sure to unbind other gbuffer targets and depth
-		ID3D11RenderTargetView* views[] = { systems.pSwapRenderTarget, 0 };
-		systems.pD3DContext->OMSetRenderTargets(2, views, 0);
-
-		// Bind our GBuffer textures as inputs to the pixel shader
-		systems.pD3DContext->PSSetShaderResources(0, 3, m_pGBufferTextureViews);
-
-
-		// For exploring the GBuffer data we use a shader.
-		// Bind GBuffer Debugging shader.
-		static int sel = 0;
-		static bool bDebugEnabled = true;
-		ImGui::Checkbox("GBuffer Debug Enable", &bDebugEnabled);
-		if (bDebugEnabled)
-		{
-			const char* aModeNames[] = { "Albido","Normals","Specular","Position","Depth" };
-			ImGui::ListBox("GBuffer Debug Mode", &sel, aModeNames, kMaxGBufferDebugModes);
-
-			m_GBufferDebugShaders[sel].bind(systems.pD3DContext);
-
-			// ... and draw a full screen quad.
-			m_fullScreenQuad.bind(systems.pD3DContext);
-			m_fullScreenQuad.draw(systems.pD3DContext);
-		}
-		else
-		{
-			// if we are not debugging the we bind the lighting shader and start accumulating light volumes.
-			// bind the light constant buffer
-			systems.pD3DContext->PSSetConstantBuffers(2, 1, &m_pLightInfoCB);
-
-			// Additive blend so we accumulate
-			systems.pD3DContext->OMSetBlendState(m_pBlendStates[BlendStates::kAdditive], kBlendFactor, kSampleMask);
-
-			static v4 tuneAtt(0.001f, 0.1f, 15.0f, 0.5f);
-			ImGui::DragFloat4("Light Att", (float*)&tuneAtt, 0.0001, 5.0f);
-
-
-			static int maxLights = m_lights.size();
-			ImGui::SliderInt("Lights", &maxLights, 0, m_lights.size());
-
-			for (u32 i = 0; i < (u32)maxLights; ++i)
-			{
-				auto& rLight(m_lights[i]);
-				// For drawing a directional light which hits everywhere we draw a full screen quad.
-
-				// Update and the light info constants.
-			//	rLight.m_shaderInfo.m_vAtt = tuneAtt;
-				push_constant_buffer(systems.pD3DContext, m_pLightInfoCB, rLight.m_shaderInfo);
-
-				switch (rLight.m_type)
-				{
-				case kLightType_Directional:
-				{
-					m_directionalLightShader.bind(systems.pD3DContext);
-					m_fullScreenQuad.bind(systems.pD3DContext);
-					m_fullScreenQuad.draw(systems.pD3DContext);
-				}
-				break;
-				case kLightType_Point:
-				{
-					m_pointLightShader.bind(systems.pD3DContext);
-
-					// Compute Light MVP matrix.
-					m4x4 matModel = m4x4::CreateScale(rLight.m_shaderInfo.m_vAtt.w); 
-					matModel *= m4x4::CreateTranslation(v3(rLight.m_shaderInfo.m_vPosition));
-					m4x4 matMVP = matModel * systems.pCamera->vpMatrix;
-
-					// Update Per Draw Data
-					m_perDrawCBData.m_matMVP = matMVP.Transpose();
-					push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
-
-					m_lightVolumeSphere.bind(systems.pD3DContext);
-					m_lightVolumeSphere.draw(systems.pD3DContext);
-				}
-				break;
-				case kLightType_Spot:
-					break;
-				default:
-					break;
-
-				}
-
-
-			}
-		}
-
-
-
-		// Unbind all the SRVs because we need them as targets next frame
-		ID3D11ShaderResourceView* srvClear[] = { 0,0,0 };
-		systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
-
-		// re-bind depth for debugging output.
-		systems.pD3DContext->OMSetRenderTargets(2, views, m_pGBufferDepthView);
 	}
 
 	void on_resize(SystemsInterface& systems) override
