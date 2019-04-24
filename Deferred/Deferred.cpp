@@ -220,19 +220,6 @@ public:
 		ImGui::SliderFloat3("Position", (float*)&m_position, -1.f, 1.f);
 		ImGui::SliderFloat("Size", &m_size, 0.1f, 10.f);
 
-		// Update Per Frame Data.
-		// calculate view project and inverse so we can project back from depth buffer into world coordinates.
-		m4x4 matViewProj = systems.pCamera->viewMatrix * systems.pCamera->projMatrix;
-		m4x4 matInverseProj = systems.pCamera->projMatrix.Invert();
-		m4x4 matInverseView = systems.pCamera->viewMatrix.Invert();
-
-		m_perFrameCBData.m_matProjection = systems.pCamera->projMatrix.Transpose();
-		m_perFrameCBData.m_matView = systems.pCamera->viewMatrix.Transpose();
-		m_perFrameCBData.m_matViewProjection = matViewProj.Transpose();
-		m_perFrameCBData.m_matInverseProjection = matInverseProj.Transpose();
-		m_perFrameCBData.m_matInverseView = matInverseView.Transpose();
-
-		m_perFrameCBData.m_time += 0.001f;
 
 
 		// move our lights
@@ -290,103 +277,12 @@ public:
 			dd::projectedText(ctx, "A Box", (const float*)&m_position, dd::colors::White, (const float*)&systems.pCamera->vpMatrix, 0, 0, systems.width, systems.height, 0.5f);
 		}
 
-		// Push Per Frame Data to GPU
-		D3D11_MAPPED_SUBRESOURCE subresource;
-		if (!FAILED(systems.pD3DContext->Map(m_pPerFrameCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &subresource)))
-		{
-			memcpy(subresource.pData, &m_perFrameCBData, sizeof(PerFrameCBData));
-			systems.pD3DContext->Unmap(m_pPerFrameCB, 0);
-		}
 
 		for (auto& rLight : m_lights)
 		{
 			dd::cross(ctx, (const float*)& rLight.m_shaderInfo.m_vPosition, 0.2f);
 		}
 
-
-
-		
-
-		//=======================================================================================
-		// The Geometry Pass.
-		// Draw our scene into the GBuffer, capturing all the information we need for lighting.
-		//=======================================================================================
-
-		// Bind the G Buffer to the output merger
-		// Here we are binding multiple render targets (MRT)
-		systems.pD3DContext->OMSetRenderTargets(kMaxGBufferColourTargets, m_pGBufferTargetViews, m_pGBufferDepthView);
-
-		// Clear colour and depth
-		f32 clearValue[] = { 0.f, 0.f, 0.f, 0.f };
-		systems.pD3DContext->ClearRenderTargetView(m_pGBufferTargetViews[kGBufferColourSpec], clearValue);
-		f32 normalClearValue[] = { 0.5f, 0.5f, 0.5f, 0.f };
-		systems.pD3DContext->ClearRenderTargetView(m_pGBufferTargetViews[kGBufferNormalPow], normalClearValue);
-		systems.pD3DContext->ClearDepthStencilView(m_pGBufferDepthView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
-
-		// Bind our geometry pass shader.
-		m_geometryPassShader.bind(systems.pD3DContext);
-
-		// Bind Constant Buffers, to both PS and VS stages
-		ID3D11Buffer* buffers[] = { m_pPerFrameCB, m_pPerDrawCB };
-		systems.pD3DContext->VSSetConstantBuffers(0, 2, buffers);
-		systems.pD3DContext->PSSetConstantBuffers(0, 2, buffers);
-
-		// Bind a sampler state
-		ID3D11SamplerState* samplers[] = { m_pSamplerState };
-		systems.pD3DContext->PSSetSamplers(0, 1, samplers);
-
-
-		// Opaque blend
-		systems.pD3DContext->OMSetBlendState(m_pBlendStates[BlendStates::kOpaque], kBlendFactor, kSampleMask);
-
-		// draw a plane
-		{			
-			m_plane.bind(systems.pD3DContext);
-			m_textureArray[0].bind(systems.pD3DContext, ShaderStage::kPixel, 0);
-
-			// Compute MVP matrix.
-			m4x4 matModel = m4x4::CreateTranslation(0.f, 0.f, 0.f);
-			m4x4 matMVP = matModel * systems.pCamera->vpMatrix;
-
-			// Update Per Draw Data
-			m_perDrawCBData.m_matMVP = matMVP.Transpose();
-
-			// Push to GPU
-			push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
-
-			// Draw the mesh.
-			m_plane.draw(systems.pD3DContext);
-
-		}
-
-
-		constexpr f32 kGridSpacing = 1.5f;
-		constexpr u32 kNumInstances = 5;
-		constexpr u32 kNumModelTypes = 2;
-
-		for (u32 i = 0; i < kNumModelTypes; ++i)
-		{
-			// Bind a mesh and texture.
-			m_meshArray[i].bind(systems.pD3DContext);
-			m_textureArray[i].bind(systems.pD3DContext, ShaderStage::kPixel, 0);
-
-			// Draw several instances
-			for (u32 j = 0; j < kNumInstances; ++j)
-			{
-				// Compute MVP matrix.
-				m4x4 matModel = m4x4::CreateTranslation(v3(j * kGridSpacing, i * kGridSpacing, 0.f));
-				m4x4 matMVP = matModel * systems.pCamera->vpMatrix;
-
-				// Update Per Draw Data
-				m_perDrawCBData.m_matMVP = matMVP.Transpose();
-
-				// Push to GPU
-				push_constant_buffer(systems.pD3DContext, m_pPerDrawCB, m_perDrawCBData);
-
-				// Draw the mesh.
-				m_meshArray[i].draw(systems.pD3DContext);
-			}
-		}
 
 
 		//VR Implementation 
@@ -410,7 +306,19 @@ public:
 		// Render Scene to Eye Buffers
 		for (int eye = 0; eye < 2; ++eye)
 		{
-			SetAndClearRenderTarget(systems.pEyeRenderTexture[eye]->GetRTV(), systems.pEyeRenderTexture[eye]->GetDSV(), systems.pD3DContext);
+			// Bind the G Buffer to the output merger
+			// Here we are binding multiple render targets (MRT)
+			systems.pD3DContext->OMSetRenderTargets(kMaxGBufferColourTargets, m_pGBufferTargetViews[eye], m_pGBufferDepthView[eye]);
+
+			// Clear colour and depth
+			f32 clearValue[] = { 0.f, 0.f, 0.f, 0.f };
+			systems.pD3DContext->ClearRenderTargetView(m_pGBufferTargetViews[eye][kGBufferColourSpec], clearValue);
+			f32 normalClearValue[] = { 0.5f, 0.5f, 0.5f, 0.f };
+			systems.pD3DContext->ClearRenderTargetView(m_pGBufferTargetViews[eye][kGBufferNormalPow], normalClearValue);
+			systems.pD3DContext->ClearDepthStencilView(m_pGBufferDepthView[eye], D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
+
+
+			SetAndClearRenderTarget(systems.pEyeRenderTexture[eye]->GetRTV(), m_pGBufferDepthView[eye], systems.pD3DContext);
 			D3D11_VIEWPORT D3Dvp;
 			D3Dvp.Width = (float)systems.pEyeRenderViewport[eye].Size.w;    D3Dvp.Height = (float)systems.pEyeRenderViewport[eye].Size.h;
 			D3Dvp.MinDepth = 0;   D3Dvp.MaxDepth = 1;
@@ -440,6 +348,28 @@ public:
 				p.M[0][2], p.M[1][2], p.M[2][2], p.M[3][2],
 				p.M[0][3], p.M[1][3], p.M[2][3], p.M[3][3]);
 			XMMATRIX prod = XMMatrixMultiply(view, proj);
+
+			// Update Per Frame Data.
+			// calculate view project and inverse so we can project back from depth buffer into world coordinates.
+			m4x4 matViewProj = prod;
+			m4x4 matInverseProj = XMMatrixInverse(nullptr, proj);
+			m4x4 matInverseView = finalCam.viewMatrix.Invert();
+
+			m_perFrameCBData.m_matProjection = XMMatrixTranspose(proj);
+			m_perFrameCBData.m_matView = finalCam.viewMatrix.Transpose();
+			m_perFrameCBData.m_matViewProjection = matViewProj.Transpose();
+			m_perFrameCBData.m_matInverseProjection = matInverseProj.Transpose();
+			m_perFrameCBData.m_matInverseView = matInverseView.Transpose();
+
+			m_perFrameCBData.m_time += 0.001f;
+			// Push Per Frame Data to GPU
+			D3D11_MAPPED_SUBRESOURCE subresource;
+			if (!FAILED(systems.pD3DContext->Map(m_pPerFrameCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &subresource)))
+			{
+				memcpy(subresource.pData, &m_perFrameCBData, sizeof(PerFrameCBData));
+				systems.pD3DContext->Unmap(m_pPerFrameCB, 0);
+			}
+
 
 
 			// Bind our geometry pass shader.
@@ -521,7 +451,7 @@ public:
 			systems.pD3DContext->OMSetRenderTargets(2, views, 0);
 
 			// Bind our GBuffer textures as inputs to the pixel shader
-			systems.pD3DContext->PSSetShaderResources(0, 2, m_pGBufferTextureViews);
+			systems.pD3DContext->PSSetShaderResources(0, 2, m_pGBufferTextureViews[eye]);
 
 
 			// For exploring the GBuffer data we use a shader.
@@ -554,6 +484,9 @@ public:
 					{
 					case kLightType_Directional:
 					{
+						m_directionalLightShader.bind(systems.pD3DContext);
+						m_fullScreenQuad.bind(systems.pD3DContext);
+						m_fullScreenQuad.draw(systems.pD3DContext);
 					}
 					break;
 					case kLightType_Point:
@@ -591,7 +524,7 @@ public:
 			systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
 
 			// re-bind depth for debugging output.
-			systems.pD3DContext->OMSetRenderTargets(2, views, m_pGBufferDepthView);
+			systems.pD3DContext->OMSetRenderTargets(2, views, m_pGBufferDepthView[eye]);
 
 			// Commit rendering to the swap chain
 			systems.pEyeRenderTexture[eye]->Commit();
@@ -653,111 +586,114 @@ private:
 
 	void create_gbuffer(ID3D11Device* pD3DDevice, ID3D11DeviceContext* pD3DContext, u32 width, u32 height)
 	{
-		HRESULT hr;
+		// Render Scene to Eye Buffers
+		for (int eye = 0; eye < 2; ++eye) {
+			HRESULT hr;
 
-		// Release all outstanding references to the swap chain's buffers.
-		pD3DContext->OMSetRenderTargets(0, 0, 0);
+			// Release all outstanding references to the swap chain's buffers.
+			pD3DContext->OMSetRenderTargets(0, 0, 0);
 
-		// destroy old g-buffer views.
-		SAFE_RELEASE(m_pGBufferDepthView);
+			// destroy old g-buffer views.
+			SAFE_RELEASE(m_pGBufferDepthView[eye]);
 
-		for (u32 i = 0; i < kMaxGBufferColourTargets; ++i)
-		{
-			SAFE_RELEASE(m_pGBufferTargetViews[i]);
-		}
-
-		// destroy old g-buffer textures.
-		for (u32 i = 0; i < kMaxGBufferTextures; ++i)
-		{
-			SAFE_RELEASE(m_pGBufferTexture[i]);
-			SAFE_RELEASE(m_pGBufferTextureViews[i]);
-		}
-
-		// Create a colour buffers
-		for (u32 i = 0; i < kMaxGBufferColourTargets; ++i)
-		{
-			D3D11_TEXTURE2D_DESC desc;
-			desc.Width = width;
-			desc.Height = height;
-			desc.MipLevels = 1;
-			desc.ArraySize = 1;
-			desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; // 4 component f16 targets
-			desc.SampleDesc.Count = 1;
-			desc.SampleDesc.Quality = 0;
-			desc.Usage = D3D11_USAGE_DEFAULT;
-			desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-			desc.CPUAccessFlags = 0;
-			desc.MiscFlags = 0;
-
-			hr = pD3DDevice->CreateTexture2D(&desc, NULL, &m_pGBufferTexture[i]);
-			if (FAILED(hr))
+			for (u32 i = 0; i < kMaxGBufferColourTargets; ++i)
 			{
-				panicF("Failed colour texture for GBuffer");
+				SAFE_RELEASE(m_pGBufferTargetViews[eye][i]);
 			}
 
-			// render target views.
-			hr = pD3DDevice->CreateRenderTargetView(m_pGBufferTexture[i], NULL, &m_pGBufferTargetViews[i]);
-			if (FAILED(hr))
+			// destroy old g-buffer textures.
+			for (u32 i = 0; i < kMaxGBufferTextures; ++i)
 			{
-				panicF("Failed colour target view for GBuffer");
+				SAFE_RELEASE(m_pGBufferTexture[eye][i]);
+				SAFE_RELEASE(m_pGBufferTextureViews[eye][i]);
 			}
 
-			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-			srvDesc.Format = desc.Format;
-			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Texture2D.MostDetailedMip = 0;
-			srvDesc.Texture2D.MipLevels = 1;
-
-			hr = pD3DDevice->CreateShaderResourceView(m_pGBufferTexture[i], &srvDesc, &m_pGBufferTextureViews[i]);
-			if (FAILED(hr))
+			// Create a colour buffers
+			for (u32 i = 0; i < kMaxGBufferColourTargets; ++i)
 			{
-				panicF("Failed to create SRV of Target for GBuffer");
+				D3D11_TEXTURE2D_DESC desc;
+				desc.Width = width;
+				desc.Height = height;
+				desc.MipLevels = 1;
+				desc.ArraySize = 1;
+				desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; // 4 component f16 targets
+				desc.SampleDesc.Count = 1;
+				desc.SampleDesc.Quality = 0;
+				desc.Usage = D3D11_USAGE_DEFAULT;
+				desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+				desc.CPUAccessFlags = 0;
+				desc.MiscFlags = 0;
+
+				hr = pD3DDevice->CreateTexture2D(&desc, NULL, &m_pGBufferTexture[eye][i]);
+				if (FAILED(hr))
+				{
+					panicF("Failed colour texture for GBuffer");
+				}
+
+				// render target views.
+				hr = pD3DDevice->CreateRenderTargetView(m_pGBufferTexture[eye][i], NULL, &m_pGBufferTargetViews[eye][i]);
+				if (FAILED(hr))
+				{
+					panicF("Failed colour target view for GBuffer");
+				}
+
+				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+				srvDesc.Format = desc.Format;
+				srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+				srvDesc.Texture2D.MostDetailedMip = 0;
+				srvDesc.Texture2D.MipLevels = 1;
+
+				hr = pD3DDevice->CreateShaderResourceView(m_pGBufferTexture[eye][i], &srvDesc, &m_pGBufferTextureViews[eye][i]);
+				if (FAILED(hr))
+				{
+					panicF("Failed to create SRV of Target for GBuffer");
+				}
+
 			}
 
-		}
-
-		// Create a depth buffer
-		{
-			D3D11_TEXTURE2D_DESC desc;
-			desc.Width = width;
-			desc.Height = height;
-			desc.MipLevels = 1;
-			desc.ArraySize = 1;
-			desc.Format = DXGI_FORMAT_R24G8_TYPELESS; // Typeless because we are binding as SRV and DepthStencilView
-			desc.SampleDesc.Count = 1;
-			desc.SampleDesc.Quality = 0;
-			desc.Usage = D3D11_USAGE_DEFAULT;
-			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-			desc.CPUAccessFlags = 0;
-			desc.MiscFlags = 0;
-
-			hr = pD3DDevice->CreateTexture2D(&desc, NULL, &m_pGBufferTexture[kGBufferDepth]);
-			if (FAILED(hr))
+			// Create a depth buffer
 			{
-				panicF("Failed to create Depth Buffer for GBuffer");
-			}
+				D3D11_TEXTURE2D_DESC desc;
+				desc.Width = width;
+				desc.Height = height;
+				desc.MipLevels = 1;
+				desc.ArraySize = 1;
+				desc.Format = DXGI_FORMAT_R24G8_TYPELESS; // Typeless because we are binding as SRV and DepthStencilView
+				desc.SampleDesc.Count = 1;
+				desc.SampleDesc.Quality = 0;
+				desc.Usage = D3D11_USAGE_DEFAULT;
+				desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+				desc.CPUAccessFlags = 0;
+				desc.MiscFlags = 0;
 
-			D3D11_DEPTH_STENCIL_VIEW_DESC depthDesc = {};
-			depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; // View suitable for writing depth
-			depthDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-			depthDesc.Texture2D.MipSlice = 0;
+				hr = pD3DDevice->CreateTexture2D(&desc, NULL, &m_pGBufferTexture[eye][kGBufferDepth]);
+				if (FAILED(hr))
+				{
+					panicF("Failed to create Depth Buffer for GBuffer");
+				}
 
-			hr = pD3DDevice->CreateDepthStencilView(m_pGBufferTexture[kGBufferDepth], &depthDesc, &m_pGBufferDepthView);
-			if (FAILED(hr))
-			{
-				panicF("Failed to create Depth Stencil View for GBuffer");
-			}
+				D3D11_DEPTH_STENCIL_VIEW_DESC depthDesc = {};
+				depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; // View suitable for writing depth
+				depthDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+				depthDesc.Texture2D.MipSlice = 0;
 
-			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-			srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS; // View suitable for decoding full 24bits of depth to red channel.
-			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Texture2D.MostDetailedMip = 0;
-			srvDesc.Texture2D.MipLevels = 1;
+				hr = pD3DDevice->CreateDepthStencilView(m_pGBufferTexture[eye][kGBufferDepth], &depthDesc, &m_pGBufferDepthView[eye]);
+				if (FAILED(hr))
+				{
+					panicF("Failed to create Depth Stencil View for GBuffer");
+				}
 
-			hr = pD3DDevice->CreateShaderResourceView(m_pGBufferTexture[kGBufferDepth], &srvDesc, &m_pGBufferTextureViews[kGBufferDepth]);
-			if (FAILED(hr))
-			{
-				panicF("Failed to create SRV of Depth for GBuffer");
+				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+				srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS; // View suitable for decoding full 24bits of depth to red channel.
+				srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+				srvDesc.Texture2D.MostDetailedMip = 0;
+				srvDesc.Texture2D.MipLevels = 1;
+
+				hr = pD3DDevice->CreateShaderResourceView(m_pGBufferTexture[eye][kGBufferDepth], &srvDesc, &m_pGBufferTextureViews[eye][kGBufferDepth]);
+				if (FAILED(hr))
+				{
+					panicF("Failed to create SRV of Depth for GBuffer");
+				}
 			}
 		}
 	}
@@ -801,10 +737,10 @@ private:
 
 
 	// GBuffer objects
-	ID3D11Texture2D*		m_pGBufferTexture[kMaxGBufferTextures];
-	ID3D11RenderTargetView* m_pGBufferTargetViews[kMaxGBufferColourTargets];
-	ID3D11DepthStencilView* m_pGBufferDepthView;
-	ID3D11ShaderResourceView* m_pGBufferTextureViews[kMaxGBufferTextures];
+	ID3D11Texture2D*		m_pGBufferTexture[2][kMaxGBufferTextures];
+	ID3D11RenderTargetView* m_pGBufferTargetViews[2][kMaxGBufferColourTargets];
+	ID3D11DepthStencilView* m_pGBufferDepthView[2];
+	ID3D11ShaderResourceView* m_pGBufferTextureViews[2][kMaxGBufferTextures];
 
 
 	v3 m_position;

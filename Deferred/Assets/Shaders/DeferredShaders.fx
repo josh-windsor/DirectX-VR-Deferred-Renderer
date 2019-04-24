@@ -11,7 +11,7 @@ cbuffer PerFrameCB : register(b0)
 	float4x4 matInverseProjection;
 	float4x4 matInverseView;
 	float  time;
-	float  padding[3];
+	//float  padding[3];
 };
 
 cbuffer PerDrawCB : register(b1)

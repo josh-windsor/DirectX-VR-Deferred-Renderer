@@ -1236,8 +1236,8 @@ int framework_main(FrameworkApp& rApp, const char* pTitleString, HINSTANCE hInst
 	systems.pEyeRenderTexture[0] = renderWindow.m_pOvrEyeRenderTexture[0];
 	systems.pEyeRenderTexture[1] = renderWindow.m_pOvrEyeRenderTexture[1];
 	systems.pCamera = &camera;
-	systems.width = Window::s_width;
-	systems.height = Window::s_height;
+	systems.width = 1344;
+	systems.height = 1600;
 
 
 	// Let the application initialise.
