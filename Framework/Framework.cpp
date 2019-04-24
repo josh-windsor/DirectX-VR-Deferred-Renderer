@@ -346,10 +346,6 @@ public:
 
 	void onRender() override
 	{
-		const float clearColor[] = { 0, 0, 0, 0.f };
-		m_pDeviceContext->ClearRenderTargetView(m_pRenderTargetView.Get(), clearColor);
-
-		m_pDeviceContext->ClearDepthStencilView(m_pDepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
 
 		if (m_pRenderCallback)
 		{
@@ -389,8 +385,6 @@ public:
 			panicF("Failed to ResizeBuffers.");
 		}
 
-		// Now setup all the views and bind the target.
-		SetupRenderTarget(width, height);
 
 		m_pResizeCallback(width, height);
 	}
@@ -416,8 +410,8 @@ private:
 
 
 		UINT createDeviceFlags = 0;
-		const UINT width = Window::s_width;
-		const UINT height = Window::s_height;
+		const UINT width = 1344;
+		const UINT height = 1600;
 
 		// If the project is in a debug build, enable debugging via SDK Layers with this flag.
 #if defined(DEBUG) || defined(_DEBUG)
@@ -465,8 +459,6 @@ private:
 		if (FAILED(hr))panicF("Failed to create SwapChain!");
 
 
-		// Now setup all the views and bind the target.
-		SetupRenderTarget(width, height);
 
 		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(m_pOvrSession);
 		// Make the eye render buffers (caution if actual size < requested due to HW limits).
@@ -489,68 +481,7 @@ private:
 
 	}
 
-	void SetupRenderTarget(const UINT width, const UINT height)
-	{
-		HRESULT hr;
 
-		// Create a render target view for the framebuffer:
-		// Create backbuffer
-		ID3D11Texture2D * backBuffer = nullptr;
-		hr = m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
-		if (FAILED(hr)){panicF("Failed to get framebuffer from swap chain!");}
-
-		hr = m_pD3DDevice->CreateRenderTargetView(backBuffer, NULL, m_pRenderTargetView.GetAddressOf());
-		backBuffer->Release();
-		if (FAILED(hr)){panicF("Failed to create Render Target View for framebuffer!");}
-
-		// Create the Depth buffer.
-		CreateDepthBuffer(width, height);
-
-
-		ID3D11RenderTargetView* targets[] = { m_pRenderTargetView.Get() };
-		m_pDeviceContext->OMSetRenderTargets(1, targets, m_pDepthStencilView.Get());
-
-
-		// Setup the viewport:
-		D3D11_VIEWPORT vp;
-		vp.Width = static_cast<float>(width);
-		vp.Height = static_cast<float>(height);
-		vp.MinDepth = 0.0f;
-		vp.MaxDepth = 1.0f;
-		vp.TopLeftX = 0;
-		vp.TopLeftY = 0;
-		m_pDeviceContext->RSSetViewports(1, &vp);
-
-
-		// setup the depth stencil state.
-		D3D11_DEPTH_STENCIL_DESC dsDesc;
-
-		// Depth test parameters
-		dsDesc.DepthEnable = true;
-		dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-		dsDesc.DepthFunc = D3D11_COMPARISON_LESS;
-
-		// Stencil test parameters
-		dsDesc.StencilEnable = false;
-		dsDesc.StencilReadMask = 0xFF;
-		dsDesc.StencilWriteMask = 0xFF;
-
-		// Stencil operations if pixel is front-facing
-		dsDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
-		dsDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_INCR;
-		dsDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
-		dsDesc.FrontFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
-
-		// Stencil operations if pixel is back-facing
-		dsDesc.BackFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
-		dsDesc.BackFace.StencilDepthFailOp = D3D11_STENCIL_OP_DECR;
-		dsDesc.BackFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
-		dsDesc.BackFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
-
-		// Create depth stencil state
-		m_pD3DDevice->CreateDepthStencilState(&dsDesc, m_pDepthStencilState.GetAddressOf());
-		m_pDeviceContext->OMSetDepthStencilState(m_pDepthStencilState.Get(), 0);
-	}
 
 	void CreateDepthBuffer(const UINT width, const UINT height)
 	{

@@ -9,7 +9,7 @@ using namespace DirectX;
 
 constexpr float kBlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 constexpr UINT kSampleMask = 0xffffffff;
-constexpr u32 kLightGridSize = 24;
+constexpr u32 kLightGridSize = 20;
 
 //================================================================================
 // Deferred Application
@@ -63,7 +63,7 @@ public:
 	{
 		m_position = v3(0.5f, 0.5f, 0.5f);
 		m_size = 1.0f;
-		systems.pCamera->eye = v3(10.f, 5.f, 7.f);
+		systems.pCamera->eye = v3(5.f, 1.f, 5.f);
 		systems.pCamera->look_at(v3(3.f, 0.5f, 0.f));
 
 		create_shaders(systems);
@@ -189,6 +189,18 @@ public:
 			v4(0,1,1,0),
 			v4(1,0,1,0)
 		};
+
+		{				
+			/*Light l = {};
+			l.m_shaderInfo.m_vDirection = v4(0, 0, 0, 0);
+			l.m_shaderInfo.m_vColour = colours[2] * 0.9f;
+			l.m_shaderInfo.m_vPosition = v4(2.0f, 0.5f, 0.0f, 1.0f);
+			l.m_shaderInfo.m_vAtt = v4(0.001f, 0.1f, 5.0f, 2.0f);
+			l.m_type = kLightType_Point;
+
+			m_lights.push_back(l);*/
+		}
+
 
 		for (u32 i = 0; i < kLightGridSize; ++i)
 		{
@@ -344,9 +356,9 @@ public:
 			ovrMatrix4f p = ovrMatrix4f_Projection(eyeRenderDesc[eye].Fov, 0.2f, 1000.0f, ovrProjection_None);
 			posTimewarpProjectionDesc = ovrTimewarpProjectionDesc_FromProjection(p, ovrProjection_None);
 			XMMATRIX proj = XMMatrixSet(p.M[0][0], p.M[1][0], p.M[2][0], p.M[3][0],
-				p.M[0][1], p.M[1][1], p.M[2][1], p.M[3][1],
-				p.M[0][2], p.M[1][2], p.M[2][2], p.M[3][2],
-				p.M[0][3], p.M[1][3], p.M[2][3], p.M[3][3]);
+										p.M[0][1], p.M[1][1], p.M[2][1], p.M[3][1],
+										p.M[0][2], p.M[1][2], p.M[2][2], p.M[3][2],
+										p.M[0][3], p.M[1][3], p.M[2][3], p.M[3][3]);
 			XMMATRIX prod = XMMatrixMultiply(view, proj);
 
 			// Update Per Frame Data.
@@ -409,9 +421,6 @@ public:
 			}
 
 
-
-
-			//DRAW
 			constexpr f32 kGridSpacing = 1.5f;
 			constexpr u32 kNumInstances = 5;
 			constexpr u32 kNumModelTypes = 2;
@@ -463,10 +472,6 @@ public:
 
 				// Additive blend so we accumulate
 				systems.pD3DContext->OMSetBlendState(m_pBlendStates[BlendStates::kAdditive], kBlendFactor, kSampleMask);
-
-				static v4 tuneAtt(0.001f, 0.1f, 15.0f, 0.5f);
-				ImGui::DragFloat4("Light Att", (float*)&tuneAtt, 0.0001, 5.0f);
-
 
 				static int maxLights = m_lights.size();
 				ImGui::SliderInt("Lights", &maxLights, 0, m_lights.size());
@@ -623,6 +628,7 @@ private:
 				desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 				desc.CPUAccessFlags = 0;
 				desc.MiscFlags = 0;
+				
 
 				hr = pD3DDevice->CreateTexture2D(&desc, NULL, &m_pGBufferTexture[eye][i]);
 				if (FAILED(hr))

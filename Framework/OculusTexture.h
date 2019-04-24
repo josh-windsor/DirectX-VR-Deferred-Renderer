@@ -2,6 +2,7 @@
 //------------------------------------------------------------
 // ovrSwapTextureSet wrapper class that also maintains the render target views
 // needed for D3D11 rendering.
+//Modified by Josh Windsor to support deferred rendering
 #include "OVR_CAPI_D3D.h"
 #include <vector>
 #include "CommonHeader.h"
@@ -86,6 +87,7 @@ struct OculusTexture
 				return false;
 
 			int textureCount = 0;
+
 			ovr_GetTextureSwapChainLength(Session, DepthTextureChain, &textureCount);
 			for (int i = 0; i < textureCount; ++i)
 			{
