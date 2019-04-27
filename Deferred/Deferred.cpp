@@ -460,7 +460,8 @@ public:
 			systems.pD3DContext->OMSetRenderTargets(2, views, 0);
 
 			// Bind our GBuffer textures as inputs to the pixel shader
-			systems.pD3DContext->PSSetShaderResources(0, 2, m_pGBufferTextureViews[eye]);
+			ID3D11ShaderResourceView* srVs[] = { systems.pEyeRenderTexture[eye]->GetDTV(), 0 };
+			systems.pD3DContext->PSSetShaderResources(0, 2, srVs);
 
 
 			// For exploring the GBuffer data we use a shader.
@@ -529,7 +530,7 @@ public:
 			systems.pD3DContext->PSSetShaderResources(0, 3, srvClear);
 
 			// re-bind depth for debugging output.
-			systems.pD3DContext->OMSetRenderTargets(2, views, m_pGBufferDepthView[eye]);
+			systems.pD3DContext->OMSetRenderTargets(2, views, systems.pEyeRenderTexture[eye]->GetDSV());
 
 			// Commit rendering to the swap chain
 			systems.pEyeRenderTexture[eye]->Commit();

@@ -394,7 +394,6 @@ private:
 	void initD3D()
 	{
 
-		int msaaRate = 4;
 
 		// Initializes LibOVR, and the Rift
 		ovrInitParams initParams = { ovrInit_RequestVersion | ovrInit_FocusAware, OVR_MINOR_VERSION, NULL, 0, 0 };
@@ -466,7 +465,7 @@ private:
 		{
 			ovrSizei idealSize = ovr_GetFovTextureSize(m_pOvrSession, (ovrEyeType)eye, hmdDesc.DefaultEyeFov[eye], 1.0f);
 			m_pOvrEyeRenderTexture[eye] = new OculusTexture();
-			if (!m_pOvrEyeRenderTexture[eye]->Init(m_pOvrSession, idealSize.w, idealSize.h, msaaRate, true, m_pD3DDevice.Get()))
+			if (!m_pOvrEyeRenderTexture[eye]->Init(m_pOvrSession, idealSize.w, idealSize.h, true, m_pD3DDevice.Get()))
 			{
 				panicF("Failed to create eye texture.");
 			}
