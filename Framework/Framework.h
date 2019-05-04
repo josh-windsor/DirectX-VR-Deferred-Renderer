@@ -133,7 +133,7 @@ struct SystemsInterface
 	ID3D11RenderTargetView* pSwapRenderTarget; // 
 	ovrSession* pOvrSession;
 	ovrRecti* pEyeRenderViewport;
-	OculusTexture* pEyeRenderTexture[2];
+	OculusTexture* pEyeRenderTexture;
 	dd::ContextHandle pDebugDrawContext;
 	Camera* pCamera;
 	u32 width;

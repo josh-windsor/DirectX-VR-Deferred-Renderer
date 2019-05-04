@@ -9,7 +9,8 @@ using namespace DirectX;
 
 constexpr float kBlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 constexpr UINT kSampleMask = 0xffffffff;
-constexpr u32 kLightGridSize = 20;
+constexpr u32 kLightGridSize = 24;
+long long frameIndex = 0;
 
 //================================================================================
 // Deferred Application
@@ -248,15 +249,18 @@ public:
 			}
 		}
 	}
-	void SetAndClearRenderTarget(ID3D11RenderTargetView * rendertarget, ID3D11DepthStencilView* depthStencil, ID3D11DeviceContext* context)
+	void SetAndClearRenderTarget(ID3D11RenderTargetView * rendertarget, ID3D11DeviceContext* context)
 	{
 		//Set & Clear buffers
 		f32 clearValue[] = { 0.f, 0.f, 0.f, 0.f };
 
-		context->OMSetRenderTargets(1, &rendertarget, depthStencil);
+		context->OMSetRenderTargets(1, &rendertarget, nullptr);
 		context->ClearRenderTargetView(rendertarget, clearValue);
-		if (depthStencil)
-			context->ClearDepthStencilView(depthStencil, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1, 0);
+	}
+
+	void renderScene(SystemsInterface& systems, XMMATRIX finalViewMatrix)
+	{
+		
 	}
 
 	void on_render(SystemsInterface& systems) override
@@ -295,8 +299,6 @@ public:
 			dd::cross(ctx, (const float*)& rLight.m_shaderInfo.m_vPosition, 0.2f);
 		}
 
-
-
 		//VR Implementation 
 		ovrHmdDesc hmdDesc = ovr_GetHmdDesc(*systems.pOvrSession);
 
@@ -311,9 +313,15 @@ public:
 									 eyeRenderDesc[1].HmdToEyePose };
 
 		double sensorSampleTime;    // sensorSampleTime is fed into the layer later
-		ovr_GetEyePoses(*systems.pOvrSession, 0, ovrTrue, HmdToEyePose, EyeRenderPose, &sensorSampleTime);
+		ovr_GetEyePoses(*systems.pOvrSession, frameIndex, ovrTrue, HmdToEyePose, EyeRenderPose, &sensorSampleTime);
 
 		ovrTimewarpProjectionDesc posTimewarpProjectionDesc = {};
+
+		XMMATRIX finalViewMatrix[2];
+
+		static bool bStereoInstancing = true;
+		ImGui::Checkbox("Enable Stero Rendering: ", &bStereoInstancing);
+		SetAndClearRenderTarget(systems.pEyeRenderTexture->GetRTV(), systems.pD3DContext);
 
 		// Render Scene to Eye Buffers
 		for (int eye = 0; eye < 2; ++eye)
@@ -336,7 +344,8 @@ public:
 			D3Dvp.MinDepth = 0;   D3Dvp.MaxDepth = 1;
 			D3Dvp.TopLeftX = (float)systems.pEyeRenderViewport[eye].Pos.x; D3Dvp.TopLeftY = (float)systems.pEyeRenderViewport[eye].Pos.y;
 			systems.pD3DContext->RSSetViewports(1, &D3Dvp);
-			//Get the pose information in XM format
+
+      //Get the pose information in XM format
 			XMVECTOR eyeQuat = XMVectorSet(EyeRenderPose[eye].Orientation.x, EyeRenderPose[eye].Orientation.y,
 				EyeRenderPose[eye].Orientation.z, EyeRenderPose[eye].Orientation.w);
 			XMVECTOR eyePos = XMVectorSet(EyeRenderPose[eye].Position.x, EyeRenderPose[eye].Position.y, EyeRenderPose[eye].Position.z, 0);
@@ -384,6 +393,16 @@ public:
 
 
 
+			finalViewMatrix[eye] = XMMatrixMultiply(view, proj);
+		}
+
+		if (bStereoInstancing)
+		{
+			D3D11_VIEWPORT D3Dvp;
+			D3Dvp.Width = (float)systems.pEyeRenderViewport[0].Size.w + systems.pEyeRenderViewport[1].Size.w;    D3Dvp.Height = (float)systems.pEyeRenderViewport[0].Size.h;
+			D3Dvp.MinDepth = 0;   D3Dvp.MaxDepth = 1;
+			D3Dvp.TopLeftX = 0; D3Dvp.TopLeftY = 0;
+			systems.pD3DContext->RSSetViewports(1, &D3Dvp);
 			// Bind our geometry pass shader.
 			m_geometryPassShader.bind(systems.pD3DContext);
 
@@ -407,7 +426,7 @@ public:
 
 				// Compute MVP matrix.
 				m4x4 matModel = m4x4::CreateTranslation(0.f, 0.f, 0.f);
-				m4x4 matMVP = matModel * prod;
+				m4x4 matMVP = matModel * finalViewMatrix[0];
 
 				// Update Per Draw Data
 				m_perDrawCBData.m_matMVP = matMVP.Transpose();
@@ -419,7 +438,6 @@ public:
 				m_plane.draw(systems.pD3DContext);
 
 			}
-
 
 			constexpr f32 kGridSpacing = 1.5f;
 			constexpr u32 kNumInstances = 5;
@@ -436,7 +454,7 @@ public:
 				{
 					// Compute MVP matrix.
 					m4x4 matModel = m4x4::CreateTranslation(v3(j * kGridSpacing, i * kGridSpacing, 0.f));
-					m4x4 matMVP = matModel * prod;
+					m4x4 matMVP = matModel * finalViewMatrix[0];
 
 					// Update Per Draw Data
 					m_perDrawCBData.m_matMVP = matMVP.Transpose();
@@ -531,7 +549,6 @@ public:
 
 			// re-bind depth for debugging output.
 			systems.pD3DContext->OMSetRenderTargets(2, views, systems.pEyeRenderTexture[eye]->GetDSV());
-
 			// Commit rendering to the swap chain
 			systems.pEyeRenderTexture[eye]->Commit();
 
@@ -560,6 +577,7 @@ public:
 			panicF("Fail Rendering Loop!");
 
 		//=======================================================================================
+
 
 	}
 

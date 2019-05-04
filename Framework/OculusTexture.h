@@ -133,18 +133,62 @@ struct OculusTexture
 		}
 
 		return true;
+	}*/
+
+	bool Init(ovrSession session, int sizeW, int sizeH, ID3D11Device* pD3DDevice)
+	{
+		Session = session;
+
+		ovrTextureSwapChainDesc desc = {};
+		desc.Type = ovrTexture_2D;
+		desc.ArraySize = 1;
+		desc.Format = OVR_FORMAT_R8G8B8A8_UNORM_SRGB;
+		desc.Width = sizeW;
+		desc.Height = sizeH;
+		desc.MipLevels = 1;
+		desc.SampleCount = 1;
+		desc.MiscFlags = ovrTextureMisc_DX_Typeless;
+		desc.StaticImage = ovrFalse;
+		desc.BindFlags = ovrTextureBind_DX_RenderTarget;
+
+		ovrResult result = ovr_CreateTextureSwapChainDX(session, pD3DDevice, &desc, &TextureChain);
+		if (!OVR_SUCCESS(result))
+			return false;
+
+		int textureCount = 0;
+		ovr_GetTextureSwapChainLength(Session, TextureChain, &textureCount);
+		VALIDATE(textureCount == TextureCount, "TextureCount mismatch.");
+
+		for (int i = 0; i < TextureCount; ++i)
+		{
+			ID3D11Texture2D* tex = nullptr;
+			ovr_GetTextureSwapChainBufferDX(Session, TextureChain, i, IID_PPV_ARGS(&tex));
+			D3D11_RENDER_TARGET_VIEW_DESC rtvd = {};
+			rtvd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			rtvd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+			pD3DDevice->CreateRenderTargetView(tex, &rtvd, &TexRtv[i]);
+			tex->Release();
+		}
+
+		return true;
 	}
+
 
 	~OculusTexture()
 	{
-		for (int i = 0; i < (int)TexRtv.size(); ++i)
+		for (int i = 0; i < TextureCount; ++i)
 		{
 			TexRtv[i]->Release();
 		}
-		for (int i = 0; i < (int)TexDsv.size(); ++i)
+
+		/*for (int i = 0; i < (int)TexRtv.size(); ++i)
+		{
+			TexRtv[i]->Release();
+		}*/
+		/*for (int i = 0; i < (int)TexDsv.size(); ++i)
 		{
 			TexDsv[i]->Release();
-		}
+		}*/
 		if (TextureChain)
 		{
 			ovr_DestroyTextureSwapChain(Session, TextureChain);
@@ -178,7 +222,6 @@ struct OculusTexture
 	void Commit()
 	{
 		ovr_CommitTextureSwapChain(Session, TextureChain);
-		ovr_CommitTextureSwapChain(Session, DepthTextureChain);
 	}
 };
 
