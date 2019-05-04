@@ -2,9 +2,11 @@
 //------------------------------------------------------------
 // ovrSwapTextureSet wrapper class that also maintains the render target views
 // needed for D3D11 rendering.
+//Modified by Josh Windsor to support deferred rendering
 #include "OVR_CAPI_D3D.h"
 #include <vector>
 #include "CommonHeader.h"
+#include <sstream>
 #ifndef VALIDATE
 #define VALIDATE(x, msg) if (!(x)) { MessageBoxA(nullptr, (msg), "JW_STGA", MB_ICONERROR | MB_OK); exit(-1); }
 #endif
@@ -14,10 +16,9 @@ struct OculusTexture
 	ovrSession               Session;
 	ovrTextureSwapChain      TextureChain;
 	ovrTextureSwapChain      DepthTextureChain;
-	//std::vector<ID3D11RenderTargetView*> TexRtv;
-	//std::vector<ID3D11DepthStencilView*> TexDsv;
-	static const int         TextureCount = 3;
-	ID3D11RenderTargetView * TexRtv[TextureCount];
+	std::vector<ID3D11RenderTargetView*> TexRtv;
+	std::vector<ID3D11DepthStencilView*> TexDsv;
+	std::vector<ID3D11ShaderResourceView*> TexDtv;
 
 	OculusTexture() :
 		Session(nullptr),
@@ -26,9 +27,10 @@ struct OculusTexture
 	{
 	}
 
-	/*bool Init(ovrSession session, int sizeW, int sizeH, int sampleCount, bool createDepth, ID3D11Device* pD3DDevice)
+	bool Init(ovrSession session, int sizeW, int sizeH, bool createDepth, ID3D11Device* pD3DDevice)
 	{
 		Session = session;
+		int sampleCount = 1;
 
 		// create color texture swap chain first
 		{
@@ -72,14 +74,14 @@ struct OculusTexture
 		if (createDepth)
 		{
 			ovrTextureSwapChainDesc desc = {};
-			desc.Type = ovrTexture_2D;
-			desc.ArraySize = 1;
 			desc.Width = sizeW;
 			desc.Height = sizeH;
+			desc.Type = ovrTexture_2D;
+			desc.ArraySize = 1;
 			desc.MipLevels = 1;
 			desc.SampleCount = sampleCount;
-			desc.Format = OVR_FORMAT_D32_FLOAT;
-			desc.MiscFlags = ovrTextureMisc_None;
+			desc.Format = OVR_FORMAT_D24_UNORM_S8_UINT;
+			desc.MiscFlags = ovrTextureMisc_DX_Typeless;
 			desc.BindFlags = ovrTextureBind_DX_DepthStencil;
 			desc.StaticImage = ovrFalse;
 
@@ -88,6 +90,7 @@ struct OculusTexture
 				return false;
 
 			int textureCount = 0;
+
 			ovr_GetTextureSwapChainLength(Session, DepthTextureChain, &textureCount);
 			for (int i = 0; i < textureCount; ++i)
 			{
@@ -95,7 +98,7 @@ struct OculusTexture
 				ovr_GetTextureSwapChainBufferDX(Session, DepthTextureChain, i, IID_PPV_ARGS(&tex));
 
 				D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-				dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+				dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
 				dsvDesc.ViewDimension = (sampleCount > 1) ? D3D11_DSV_DIMENSION_TEXTURE2DMS
 					: D3D11_DSV_DIMENSION_TEXTURE2D;
 				dsvDesc.Texture2D.MipSlice = 0;
@@ -104,7 +107,28 @@ struct OculusTexture
 				HRESULT hr = pD3DDevice->CreateDepthStencilView(tex, &dsvDesc, &dsv);
 				VALIDATE((hr == ERROR_SUCCESS), "Error creating depth stencil view");
 				TexDsv.push_back(dsv);
+
+				ovr_GetTextureSwapChainBufferDX(Session, DepthTextureChain, i, IID_PPV_ARGS(&tex));
+
+
+				//Doesnt work right now 
+				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+				srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS; // View suitable for decoding full 24bits of depth to red channel.
+				srvDesc.ViewDimension = (sampleCount > 1) ? D3D11_SRV_DIMENSION_TEXTURE2DMS
+					: D3D11_SRV_DIMENSION_TEXTURE2D;
+				srvDesc.Texture2D.MostDetailedMip = 0;
+				srvDesc.Texture2D.MipLevels = 1;
+
+				ID3D11ShaderResourceView* dtv;
+				hr = pD3DDevice->CreateShaderResourceView(tex, &srvDesc, &dtv);
+				VALIDATE((hr == ERROR_SUCCESS), "Failure in Oculus SRV");
+
+				TexDtv.push_back(dtv);
+
+
+
 				tex->Release();
+
 			}
 		}
 
@@ -180,6 +204,18 @@ struct OculusTexture
 		int index = 0;
 		ovr_GetTextureSwapChainCurrentIndex(Session, TextureChain, &index);
 		return TexRtv[index];
+	}
+	ID3D11DepthStencilView* GetDSV()
+	{
+		int index = 0;
+		ovr_GetTextureSwapChainCurrentIndex(Session, DepthTextureChain, &index);
+		return TexDsv[index];
+	}
+	ID3D11ShaderResourceView* GetDTV()
+	{
+		int index = 0;
+		ovr_GetTextureSwapChainCurrentIndex(Session, DepthTextureChain, &index);
+		return TexDtv[index];
 	}
 
 	// Commit changes
